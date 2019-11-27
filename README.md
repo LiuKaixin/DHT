@@ -155,3 +155,10 @@ $ ./fora batch-topk --algo <algo-name> --prefix <data-folder> --dataset <graph-n
 ```sh
 $ ./fora batch-topk --algo fora --prefix ./data/ --dataset webstanford --epsilon 0.5 --query_size 20 --k 500 --exact_ppr_path ./exact/
 ```
+
+- statistic
+
+```sh
+statistic  --prefix ./data/ --dataset webstanford
+```
+

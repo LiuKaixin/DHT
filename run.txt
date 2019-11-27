@@ -1,0 +1,18 @@
+query --algo montecarlo2 --prefix ./data/ --dataset webstanford --epsilon 0.5
+
+query --algo fora_mc --prefix ./data/ --dataset webstanford --epsilon 0.5 --query_size 1 --with_idx
+
+
+/Applications/CLion.app/Contents/bin/cmake/mac/bin/cmake -DCMAKE_BUILD_TYPE= -G "CodeBlocks - Unix Makefiles" /Users/liukaixin/Project/fora-master
+-- Boost version: 1.68.0
+-- Found the following Boost libraries:
+--   unit_test_framework
+--   filesystem
+--   system
+--   date_time
+--   program_options
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /Users/liukaixin/Project/fora-master
+
+[Finished]
