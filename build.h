@@ -125,14 +125,23 @@ inline string get_exact_topk_ppr_file(){
         config.exact_pprs_folder += FILESEP;
     return config.exact_pprs_folder+config.graph_alias+".topk.pprs";
 }
-
+inline string get_self_ppr_file(){
+    if(!boost::algorithm::ends_with(config.exact_pprs_folder, FILESEP))
+        config.exact_pprs_folder += FILESEP;
+    return config.exact_pprs_folder+config.graph_alias+".self.pprs";
+}
 inline void save_exact_topk_ppr(){
     string filename = get_exact_topk_ppr_file();
     std::ofstream ofs(filename);
     boost::archive::text_oarchive oa(ofs);
     oa << exact_topk_pprs;
 }
-
+inline void save_self_ppr(const vector<double> &ppr_self){
+    string filename = get_self_ppr_file();
+    std::ofstream ofs(filename);
+    boost::archive::text_oarchive oa(ofs);
+    oa << ppr_self;
+}
 inline void load_exact_topk_ppr(){
     string filename = get_exact_topk_ppr_file();
     if(!exists_test(filename)){

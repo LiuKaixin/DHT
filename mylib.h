@@ -49,7 +49,6 @@ typedef pair<double, double> dpair;
 #define F first
 #define S second
 
-
 #ifndef TIMES_PER_SEC
 #define TIMES_PER_SEC (1.0e9)
 #endif

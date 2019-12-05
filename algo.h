@@ -40,10 +40,11 @@ iMap<int> topk_filter;
 iMap<int> rw_counter;
 
 iMap<double> rw_bippr_counter;
-iMap<int> dht_candidate;
 // RwIdx rw_idx;
 atomic<unsigned long long> num_hit_idx;
 atomic<unsigned long long> num_total_rw;
+atomic<unsigned long long> num_total_bi;
+atomic<unsigned long long> num_total_fo;
 long num_iter_topk;
 vector<int> rw_idx;
 vector<pair<unsigned long long, unsigned long> > rw_idx_info;
@@ -136,6 +137,127 @@ inline int random_walk(int start, const Graph &graph) {
         }
     }
 }
+
+inline void random_walk_dht(int start, int pathid, const Graph &graph, unordered_map<int, pair<int, int>> &occur) {
+    int cur = start;
+    unsigned long k;
+    bool flag = true;
+    if (graph.g[start].size() == 0) {
+        //return start;
+        flag = false;
+        if (occur.find(cur) == occur.end()) {
+            occur.emplace(cur, make_pair(pathid, 1));
+        } else if (occur.at(cur).first != pathid) {
+            occur.at(cur).first = pathid;
+            occur.at(cur).second++;
+        }
+    }
+    while (flag) {
+        if (occur.find(cur) == occur.end()) {
+            occur.emplace(cur, make_pair(pathid, 1));
+        } else if (occur.at(cur).first != pathid) {
+            occur.at(cur).first = pathid;
+            occur.at(cur).second++;
+        }
+        if (drand() < config.alpha) {
+            //return cur;
+            break;
+        }
+        if (graph.g[cur].size()) {
+            k = lrand() % graph.g[cur].size();
+            cur = graph.g[cur][k];
+        } else {
+            cur = start;
+        }
+    }
+}
+
+void global_iteration(int v, vector<double> &dht_old, const Graph &graph) {
+    vector<double> new_dht;
+    /*
+    for(auto item:dht_old){
+        int nodeid=item.first;
+        for(int nei:graph.gr[nodeid]){
+            if (nei==v)continue;
+            int deg=graph.g[nei].size();
+            new_dht[nei] += (1-config.alpha)/deg* item.second;
+        }
+    }*/
+    double max_dht = 0;
+    for (int i = 0; i < graph.n; ++i) {
+        if (i == v)continue;
+        int deg = graph.g[i].size();
+        for (int nei:graph.g[i]) {
+            new_dht[i] += (1 - config.alpha) / deg * dht_old.at(nei);
+        }
+    }
+    new_dht[v] += 1;
+    swap(dht_old, new_dht);
+}
+
+inline bool if_dne_stop(double max_error, int k) {
+    double lambda = pow((1 - config.alpha), k) / config.alpha;
+    double error =
+            (1 - config.alpha) * (1 - config.alpha) / (config.alpha * (2 - config.alpha)) * (max_error + lambda) +
+            lambda;
+    return error < config.epsilon * config.delta;
+}
+
+double dhe_query_basic(int query_node, int v, int den_m, const Graph &graph) {
+    unordered_map<int, double> dht_to_v, dht_to_v_copy;
+    dht_to_v[v] = 1;
+    set<int> neighbors, boundary;
+    neighbors.emplace(v);
+    boundary.emplace(v);
+    int max_node = -1;
+    double max_error = 0;
+    while (neighbors.size() < den_m && !boundary.empty()) {
+        for (int node_in_bound:boundary) {
+            if (dht_to_v.at(node_in_bound) > max_error) {
+                max_error = dht_to_v.at(node_in_bound);
+                max_node = node_in_bound;
+            }
+        }
+        boundary.erase(max_node);
+        for (int nei:graph.gr[max_node]) {
+            neighbors.emplace(nei);
+        }
+        for (int nei:graph.gr[max_node]) {
+            for (int nei_of_nei:graph.gr[nei]) {
+                if (neighbors.find(nei_of_nei) == neighbors.end()) {
+                    boundary.emplace(nei);
+                    break;
+                }
+            }
+        }
+        for (int node:neighbors) {
+            dht_to_v[node] = node == v ? 1 : 0;
+            int deg = graph.g[node].size();
+            for (int nei:graph.g[node]) {
+                dht_to_v[node] += (1 - config.alpha) / deg * dht_to_v[nei];
+            }
+        }
+    }
+    //refinement
+    max_error = 0;
+    int k = 0;
+    do {
+        k++;
+        for (int node:neighbors) {
+            dht_to_v_copy[node] = node == v ? 1 : 0;
+            int deg = graph.g[node].size();
+            for (int nei:graph.g[node]) {
+                dht_to_v_copy[node] += (1 - config.alpha) / deg * dht_to_v[nei];
+            }
+            if (max_error < dht_to_v_copy[node]) {
+                max_error = dht_to_v_copy[node];
+            }
+        }
+        swap(dht_to_v, dht_to_v_copy);
+    } while (!if_dne_stop(max_error, k));
+    return dht_to_v[query_node];
+}
+
 
 unsigned int SEED = 1;
 
@@ -301,10 +423,18 @@ inline void split_line() {
 }
 
 inline void display_setting() {
+    INFO(config.epsilon);
     INFO(config.delta);
     INFO(config.pfail);
     INFO(config.rmax);
     INFO(config.omega);
+    if (config2.pfail == config.pfail) {
+        INFO(config2.epsilon);
+        INFO(config2.delta);
+        INFO(config2.pfail);
+        INFO(config2.rmax);
+        INFO(config2.omega);
+    }
 }
 
 inline void display_fwdidx() {
@@ -324,6 +454,13 @@ inline void display_fwdidx() {
 inline void display_ppr() {
     for (int i = 0; i < ppr.occur.m_num; i++) {
         cout << ppr.occur[i] << "->" << ppr[ppr.occur[i]] << endl;
+    }
+}
+
+inline void display_dht() {
+    for (int i = 0; i < dht.occur.m_num; i++) {
+        if (dht[dht.occur[i]] <= 0)continue;
+        cout << dht.occur[i] << "->" << dht[dht.occur[i]] << endl;
     }
 }
 
@@ -351,6 +488,9 @@ static void display_time_usage(int used_counter, int query_size) {
     } else if (config.algo == FWDPUSH) {
         cout << "Total cost (s): " << Timer::used(used_counter) << endl;
         cout << Timer::used(FWD_LU) * 100.0 / Timer::used(used_counter) << "%" << " for forward push cost" << endl;
+    } else if (config.algo == MC_DHT) {
+        cout << "Total cost (s): " << Timer::used(used_counter) << endl;
+        cout << Timer::used(RONDOM_WALK) * 100.0 / Timer::used(used_counter) << "%" << " for random walk cost" << endl;
     }
 
     if (config.with_rw_idx)
@@ -394,6 +534,9 @@ static void set_result(const Graph &graph, int used_counter, int query_size) {
     } else if (config.algo == BIPPR) {
         result.propagation_time = Timer::used(BWD_LU);
         result.propagation_time_ratio = Timer::used(BWD_LU) * 100 / Timer::used(used_counter);
+    } else if (config.algo == FB) {
+        result.propagation_time = Timer::used(FWD_LU) + Timer::used(BWD_LU);
+        result.propagation_time_ratio = result.propagation_time * 100 / Timer::used(used_counter);
     }
 
     if (config.action == TOPK) {
@@ -424,13 +567,40 @@ inline void hubppr_topk_setting(int n, long long m) {
 }
 
 inline void fora_setting(int n, long long m) {
-    config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail));
+    //config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail));
+    config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail) / 7);
     config.rmax *= config.rmax_scale;
     // config.rmax *= config.multithread_param;
     config.omega = (2 + config.epsilon) * log(2 / config.pfail) / config.delta / config.epsilon / config.epsilon;
 }
 
+inline void fora_bippr_setting(int n, long long m, double ratio, double raw_epsilon) {
+    config.epsilon = raw_epsilon * ratio / (ratio + 1 + raw_epsilon);
+    config2.epsilon = raw_epsilon / (ratio + 1 + raw_epsilon);
+
+    config2.delta = config2.alpha;
+    config.rmax = config.epsilon * sqrt(config.delta  / 3  /n/ log(2 / config.pfail));
+    //config.rmax =config.epsilon / n * sqrt(config.delta * m / 3 / config.alpha / log(2 / config.pfail));
+    //config.rmax = config.epsilon / n * sqrt(config.delta * m / 3  / log(2 / config.pfail));
+    //config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail));
+    //config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail)/7);
+    config.rmax *= config.rmax_scale;
+    // config.rmax *= config.multithread_param;
+    config.omega = (2 + config.epsilon) * log(2 / config.pfail) / config.delta / config.epsilon / config.epsilon;
+    config2.rmax = config2.epsilon * sqrt(config2.delta / 3 / log(2.0 / config2.pfail));
+    //config2.rmax = config2.epsilon * sqrt(m * config2.delta / 3.0 / n / log(2.0 / config2.pfail));
+    //config2.rmax = config2.epsilon * sqrt( m * config2.delta / 3.0 / n / log(2.0 / config2.pfail)/8);
+    // config.omega = m/config.rmax;
+    config2.rmax *= config2.rmax_scale;
+    config2.omega = config2.rmax * (2 + config2.epsilon) * log(2.0 / config2.pfail) / config2.delta / config2.epsilon /
+                    config2.epsilon;
+}
 inline void montecarlo_setting() {
+    double fwd_rw_count = 3 * log(2 / config.pfail) / config.epsilon / config.epsilon / config.delta;
+    config.omega = fwd_rw_count;
+}
+
+inline void montecarlo_dht_setting() {
     double fwd_rw_count = 3 * log(2 / config.pfail) / config.epsilon / config.epsilon / config.delta;
     config.omega = fwd_rw_count;
 }
@@ -451,6 +621,45 @@ inline void fwdpush_setting(int n, long long m) {
     // thus, rmax <= epsilon*delta*n/m = epsilon/m
     // use config.rmax_scale to tune rmax manually
     config.rmax = config.rmax_scale * config.delta * config.epsilon * n / m;
+}
+
+/*
+{
+        Timer timer(RONDOM_WALK); //both rand-walk and source distribution are related with num_random_walk
+        { //rand walk online
+            for (long i = 0; i < fwd_idx.second.occur.m_num; i++) {
+                int source = fwd_idx.second.occur[i];
+                double residual = fwd_idx.second[source];
+                unsigned long num_s_rw = ceil(residual / check_rsum * num_random_walk);
+                double a_s = residual / check_rsum * num_random_walk / num_s_rw;
+
+                double ppr_incre = a_s * check_rsum / num_random_walk;
+
+                num_total_rw += num_s_rw;
+                for (unsigned long j = 0; j < num_s_rw; j++) {
+                    int des = random_walk(source, graph);
+                    ppr[des] += ppr_incre;
+                }
+            }
+        }
+    }
+ */
+inline bool check_cost(double rsum, double &ratio, double n, double m) {
+    double cost_bippr = fwd_idx.second.occur.m_num * (config2.omega * 7 + m / n / config2.rmax);//config.alpha;
+    double cost_fora = m / n / config.rmax + rsum * config.omega * 7;
+    double cost_fora2 = m / n / config.rmax + n * config.rmax * config.omega * 7;
+    //double cost_bippr=fwd_idx.second.occur.m_num*config2.omega*(1+1/config2.alpha);
+    //double cost_fora=1/config.rmax+rsum*config.omega/config.alpha;
+    //double cost_bippr=fwd_idx.second.occur.m_num*config2.omega;
+    //double cost_fora=rsum*config.omega;
+    cout << "cost:\t" << cost_fora << "\t" << cost_fora2 << "\t" << cost_bippr << endl;
+    cout << "rsum:\t" << rsum << "\t" << n * config.rmax << endl;
+    cout << fwd_idx.second.occur.m_num << endl;
+    if (cost_bippr > cost_fora) {
+        ratio /= 2;
+        return true;
+    }
+    return false;
 }
 
 inline void generate_ss_query(int n) {
@@ -604,6 +813,26 @@ double topk_ppr() {
     return topk_pprs[config.k - 1].second;
 }
 
+double topk_dht() {
+    topk_dhts.clear();
+    topk_dhts.resize(config.k);
+
+    static vector<pair<int, double> > temp_dht;
+    temp_dht.clear();
+    temp_dht.resize(dht.cur);
+    int nodeid, cur = 0;
+    for (int k = 0; k < dht.occur.m_num; ++k) {
+        nodeid = dht.occur[k];
+        if (dht.exist(nodeid))
+            temp_dht[cur++] = MP(nodeid, dht[nodeid]);
+    }
+
+    partial_sort_copy(temp_dht.begin(), temp_dht.end(), topk_dhts.begin(), topk_dhts.end(),
+                      [](pair<int, double> const &l, pair<int, double> const &r) { return l.second > r.second; });
+
+    return topk_dhts[config.k - 1].second;
+}
+
 double topk_of(vector<pair<int, double> > &top_k) {
     top_k.clear();
     top_k.resize(config.k);
@@ -695,6 +924,65 @@ inline void init_multi_setting(int n) {
     INFO(config.rmax_scale);
 }
 
+static int
+reverse_local_update_linear_dht(int t, const Graph &graph, vector<int> &idx, vector<int> &node_with_r, int &pointer_r,
+                                vector<int>&q, double init_residual = 1) {
+    Timer tm(111);
+    int backward_counter = 0,pointer_q=0;
+    //vector<int> q;
+    //q.reserve(graph.n);
+    //q.push_back(-1);
+    unsigned long left = 0;
+
+    double myeps = config2.rmax;
+
+    q[pointer_q++]=t;
+    //q.push_back(t);
+    bwd_idx.second.occur[t] = t;
+    bwd_idx.second[t] = 1;
+    pointer_r = 0;
+    node_with_r[pointer_r++] = t;
+    idx[t] = t;
+    while (left != pointer_q) {
+        int v = q[left];
+        idx[v] = -1;
+        left++;
+        left%=graph.n;
+        if (bwd_idx.second[v] < myeps)
+            break;
+
+        if (bwd_idx.first.occur[v] != t) {
+            bwd_idx.first.occur[v] = t;
+            bwd_idx.first[v] = bwd_idx.second[v] * config2.alpha;
+        } else
+            bwd_idx.first[v] += bwd_idx.second[v] * config.alpha;
+
+        double residual = (1 - config2.alpha) * bwd_idx.second[v];
+        bwd_idx.second[v] = 0;
+        if (graph.gr[v].size() > 0) {
+            backward_counter += graph.gr[v].size();
+            for (int next : graph.gr[v]) {
+                int cnt = graph.g[next].size();
+                if (bwd_idx.second.occur[next] != t) {
+                    bwd_idx.second.occur[next] = t;
+                    bwd_idx.second[next] = residual / cnt;
+                    node_with_r[pointer_r++] = next;
+                } else
+                    bwd_idx.second[next] += residual / cnt;
+
+                if (bwd_idx.second[next] > myeps && idx[next] != t) {
+                    // put next into q if next is not in q
+                    idx[next] = t;//(int) q.size();
+                    //q.push_back(next);
+                    q[pointer_q++]=next;
+                    pointer_q%=graph.n;
+                }
+            }
+        }
+    }
+    return backward_counter;
+}
+
 static void reverse_local_update_linear(int t, const Graph &graph, double init_residual = 1) {
     bwd_idx.first.clean();
     bwd_idx.second.clean();
@@ -744,43 +1032,54 @@ static void reverse_local_update_linear(int t, const Graph &graph, double init_r
         }
     }
 }
-void compute_ppr_with_bwdidx_with_bound(const Graph& graph, double old_omega,double threshold){
-    for (int k = 0; k < dht_candidate.m_num; ++k) {
+
+void compute_ppr_with_bwdidx_with_bound(const Graph &graph, double old_omega, double threshold) {
+    INFO(config2.omega);
+    ppr_bi.clean();
+    for (int k = 0; k < dht.occur.m_num; ++k) {
+        int nodeid = dht.occur[k];
+        if (dht.notexist(nodeid)) { continue; }
         {
             Timer tm(RONDOM_WALK);
             num_total_rw += config2.omega;//单纯计数用
-            INFO(config2.omega);
             for (unsigned long i = 0; i < config2.omega - old_omega; i++) {
-                int destination = random_walk(k, graph);
-                multi_bwd_idx_rw[k][destination] += 1;
+                int destination = random_walk(nodeid, graph);
+                multi_bwd_idx_rw[nodeid][destination] += 1;
             }
         }
-        if (config2.rmax < 1.0){
-            ppr_bi.insert(k,multi_bwd_idx_p[k].at(k));
-
-            for(auto tmp:multi_bwd_idx_r[k]){
-                int nodeid = tmp.first;
+        if (multi_bwd_idx_p[nodeid].find(nodeid) != multi_bwd_idx_p[nodeid].end()) {
+            ppr_bi.insert(nodeid, multi_bwd_idx_p[nodeid].at(nodeid));
+        } else {
+            ppr_bi.insert(nodeid, config2.alpha);
+        }
+        if (config2.rmax < 1.0) {
+            for (auto tmp:multi_bwd_idx_r[nodeid]) {
+                int other_node = tmp.first;
                 double residual = tmp.second;
-                if (multi_bwd_idx_rw[k].find(nodeid)!=multi_bwd_idx_rw[k].end()){
-                    ppr_bi[k]+=multi_bwd_idx_rw[k].at(nodeid)/config.omega*residual;
+                if (multi_bwd_idx_rw[nodeid].find(other_node) != multi_bwd_idx_rw[nodeid].end()) {
+                    ppr_bi[nodeid] += multi_bwd_idx_rw[nodeid].at(other_node) / config.omega * residual;
                 }
             }
-        }else if (multi_bwd_idx_rw[k].find(k)!=multi_bwd_idx_rw[k].end()){
-            ppr_bi.insert(k,multi_bwd_idx_rw[k].at(k)/config.omega);
+        } else if (multi_bwd_idx_rw[nodeid].find(nodeid) != multi_bwd_idx_rw[nodeid].end()) {
+            ppr_bi.insert(nodeid, multi_bwd_idx_rw[nodeid].at(nodeid) / config.omega);
         }
-        upper_bounds_self[k]=min(upper_bounds_self_init[k],ppr_bi[k]*(1 + config2.epsilon));
-        lower_bounds_self[k]=max(config2.alpha, ppr_bi[k] * (1 - config2.epsilon));
+        double old_ub = upper_bounds_self[nodeid], old_lb = lower_bounds_self[nodeid];
+        upper_bounds_self[nodeid] = min(upper_bounds_self_init[nodeid], ppr_bi[nodeid] * (1 + config2.epsilon));
+        lower_bounds_self[nodeid] = max(config2.alpha, ppr_bi[nodeid] * (1 - config2.epsilon));
+        assert(old_ub > upper_bounds_self[nodeid] && old_lb < lower_bounds_self[nodeid]);
     }
 }
+
 void
-bippr_query_self(const Graph &graph,  double lowest_rmax, unordered_map<int, vector<int>> &backward_from) {
+bippr_query_self(const Graph &graph, double lowest_rmax, unordered_map<int, vector<int>> &backward_from) {
     Timer timer(BIPPR_QUERY);
-    for (int k = 0; k < dht_candidate.occur.m_num; ++k) {
-        if (dht_candidate.notexist(k)) { continue; }
+    for (int k = 0; k < dht.occur.m_num; ++k) {
+        int nodeid = dht.occur[k];
+        if (dht.notexist(nodeid)) { continue; }
         //////初始化！r
-        if (backward_from[k].empty()){
-            multi_bwd_idx_r[k][k]=1.0;
-            backward_from[k].push_back(k);
+        if (backward_from[nodeid].empty()) {
+            multi_bwd_idx_r[nodeid][nodeid] = 1.0;
+            backward_from[nodeid].push_back(nodeid);
         }
         static vector<bool> in_backward(graph.n);
         static vector<bool> in_next_backward(graph.n);
@@ -790,38 +1089,37 @@ bippr_query_self(const Graph &graph,  double lowest_rmax, unordered_map<int, vec
 
         vector<int> next_backward_from;
         next_backward_from.reserve(graph.n);
-        for (auto &v: backward_from[k]) {
+        for (auto &v: backward_from[nodeid]) {
             in_backward[v] = true;
         }
         unsigned long i = 0;
-        while (i < backward_from[k].size()) {
-            int v = backward_from[k][i++];
+        while (i < backward_from[nodeid].size()) {
+            int v = backward_from[nodeid][i++];
             in_backward[v] = false;
-            if (multi_bwd_idx_r[k][v] / graph.gr[v].size() >= config2.rmax) {
+            if (multi_bwd_idx_r[nodeid][v] >= config2.rmax) {
                 int out_neighbor = graph.gr[v].size();
-                double v_residue = multi_bwd_idx_r[k][v];
-                multi_bwd_idx_r[k].erase(v);//这里删除好还是等于0好？
-                multi_bwd_idx_p[k][v] += v_residue * config.alpha;
-                if (out_neighbor == 0) {
-
-                }
-                double avg_push_residual = (1 - config.alpha) * v_residue / out_neighbor;
-                for (int next: graph.gr[v]) {
-                    multi_bwd_idx_r[k][v] += avg_push_residual;
-                    if (in_backward[next] != true && multi_bwd_idx_r[k][next] / graph.gr[next].size() >= config2.rmax) {
-                        backward_from[k].push_back(next);
-                        in_backward[next]= true;
-                    } else if (in_next_backward[next]!= true&&  multi_bwd_idx_r[k][next] / graph.gr[next].size() >= lowest_rmax){
-                        next_backward_from.push_back(next);
-                        in_next_backward[next]= true;
+                double v_residue = multi_bwd_idx_r[nodeid][v];
+                multi_bwd_idx_r[nodeid].erase(v);//这里删除好还是等于0好？
+                multi_bwd_idx_p[nodeid][v] += v_residue * config.alpha;
+                if (out_neighbor > 0) {
+                    double avg_push_residual = (1 - config.alpha) * v_residue / out_neighbor;
+                    for (int nei: graph.gr[v]) {
+                        multi_bwd_idx_r[nodeid][nei] += avg_push_residual;
+                        if (in_backward[nei] != true && multi_bwd_idx_r[nodeid][nei] >= config2.rmax) {
+                            backward_from[nodeid].push_back(nei);
+                            in_backward[nei] = true;
+                        } else if (in_next_backward[nei] != true && multi_bwd_idx_r[nodeid][nei] >= lowest_rmax) {
+                            next_backward_from.push_back(nei);
+                            in_next_backward[nei] = true;
+                        }
                     }
                 }
-            } else if (in_next_backward[v]!= true&&  multi_bwd_idx_r[k][v] / graph.gr[v].size() >= lowest_rmax){
+            } else if (in_next_backward[v] != true && multi_bwd_idx_r[nodeid][v] >= lowest_rmax) {
                 next_backward_from.push_back(v);
-                in_next_backward[v]= true;
+                in_next_backward[v] = true;
             }
         }
-        backward_from[k]=next_backward_from;
+        backward_from[nodeid] = next_backward_from;
     }
 
 #ifdef CHECK_PPR_VALUES
@@ -1084,6 +1382,87 @@ void forward_local_update_linear(int s, const Graph &graph, double &rsum, double
     }
 }
 
+void forward_local_update_linear_topk_dht(int s, const Graph &graph, double &rsum, double rmax, double lowest_rmax,
+                                          vector<int> &forward_from) {
+    double myeps = rmax;
+
+    static vector<bool> in_forward(graph.n);
+    static vector<bool> in_next_forward(graph.n);
+
+    std::fill(in_forward.begin(), in_forward.end(), false);
+    std::fill(in_next_forward.begin(), in_next_forward.end(), false);
+
+    vector<int> next_forward_from;
+    next_forward_from.reserve(graph.n);
+    for (auto &v: forward_from)
+        in_forward[v] = true;
+    unsigned long long forward_counter = 0;
+    unsigned long i = 0;
+    while (i < forward_from.size()) {
+        int v = forward_from[i];
+        i++;
+        in_forward[v] = false;
+        if (fwd_idx.second[v] >= myeps) {
+            int out_neighbor = graph.g[v].size();
+            forward_counter += out_neighbor;
+            double v_residue = fwd_idx.second[v];
+            fwd_idx.second[v] = 0;
+            if (!fwd_idx.first.exist(v)) {
+                fwd_idx.first.insert(v, v_residue * config.alpha);
+            } else {
+                fwd_idx.first[v] += v_residue * config.alpha;
+            }
+
+            rsum -= v_residue * config.alpha;
+            if (out_neighbor == 0) {
+                fwd_idx.second[s] += v_residue * (1 - config.alpha);
+                if (graph.g[s].size() > 0 && in_forward[s] != true && fwd_idx.second[s] >= myeps) {
+                    forward_from.push_back(s);
+                    in_forward[s] = true;
+                } else {
+                    if (graph.g[s].size() >= 0 && in_next_forward[s] != true &&
+                        fwd_idx.second[s] >= lowest_rmax) {
+                        next_forward_from.push_back(s);
+                        in_next_forward[s] = true;
+                    }
+                }
+                continue;
+            }
+            double avg_push_residual = ((1 - config.alpha) * v_residue) / out_neighbor;
+            for (int next: graph.g[v]) {
+                if (!fwd_idx.second.exist(next))
+                    fwd_idx.second.insert(next, avg_push_residual);
+                else
+                    fwd_idx.second[next] += avg_push_residual;
+
+                if (in_forward[next] != true && fwd_idx.second[next] >= myeps) {
+                    forward_from.push_back(next);
+                    in_forward[next] = true;
+                } else {
+                    if (in_next_forward[next] != true && fwd_idx.second[next] >= lowest_rmax) {
+                        next_forward_from.push_back(next);
+                        in_next_forward[next] = true;
+                    }
+                }
+            }
+        } else {
+            if (in_next_forward[v] != true && fwd_idx.second[v] >= lowest_rmax) {
+                next_forward_from.push_back(v);
+                in_next_forward[v] = true;
+            }
+        }
+    }
+    INFO(forward_counter);
+    num_total_fo += forward_counter;
+    cout << "ratio of fo and ra:\t" << forward_counter / rsum / config.omega << endl;
+    cout << "ratio of fo and esti fo:\t" << forward_counter /(1/config.rmax)<< endl;
+    cout<<"ratio of esti fo and ra:\t"<<(1/config.rmax)/(rsum*config.omega)<<endl;
+    cout<<"ratio of esti fo and max ra:\t"<<(1/config.rmax)/(graph.n*config.rmax*config.omega)<<endl;
+    cout<<"ratio of rsum and max:\t"<<rsum/graph.n/config.rmax<<endl;
+    cout<<"ratio of esti fo and esti bw:\t"<<(1/config.rmax)/(graph.n/config2.rmax)<<endl;
+    forward_from = next_forward_from;
+}
+
 void forward_local_update_linear_topk(int s, const Graph &graph, double &rsum, double rmax, double lowest_rmax,
                                       vector<int> &forward_from) {
     double myeps = rmax;
@@ -1230,18 +1609,22 @@ bool if_stop() {
 
     return true;
 }
-bool if_stop2(bool &fora_flag, double raw_epsilon, int & candidate_num) {
+
+bool if_stop2(bool &fora_flag, int &candidate_num) {
     // Timer tm(SORT_MAP);
-    bool stop= true;
-    for (int j = 0; j < dht_candidate.occur.m_num; ++j) {
-        int nodeid=dht_candidate.occur[j];
-        if (dht_candidate.notexist(nodeid)) continue;
-        dht.insert(nodeid,ppr[nodeid]/ppr_bi[nodeid]);
+    bool stop = true;
+    for (int j = 0; j < dht.occur.m_num; ++j) {
+        int nodeid = dht.occur[j];
+        if (dht.notexist(nodeid) || ppr.notexist(nodeid) || ppr_bi.notexist(nodeid)) continue;
+        dht.insert(nodeid, ppr[nodeid] / ppr_bi[nodeid]);
+        upper_bounds_dht.insert(nodeid, upper_bounds[nodeid] / lower_bounds_self[nodeid]);
+        lower_bounds_dht.insert(nodeid, lower_bounds[nodeid] / upper_bounds_self[nodeid]);
+        //cout<<nodeid<<":\t"<<upper_bounds[nodeid]<<"\t"<<lower_bounds[nodeid]<<"\t"<<upper_bounds_self[nodeid]<<"\t"<<lower_bounds_self[nodeid]<<"\t\t"<<upper_bounds_dht[nodeid]<<"\t"<<lower_bounds_dht[nodeid]<<endl;
     }
 
     //if (config.delta >= threshold) return false;
 
-    const static double error = 1.0 + raw_epsilon;
+    const static double real_epsilon = (1.0 + config.epsilon) / (1.0 + config2.epsilon) - 1;
 
     topk_dhts.clear();
     topk_dhts.resize(config.k);
@@ -1249,13 +1632,13 @@ bool if_stop2(bool &fora_flag, double raw_epsilon, int & candidate_num) {
 
     static vector<pair<int, double> > temp_bounds;
     temp_bounds.clear();
-    temp_bounds.resize(dht_candidate.occur.m_num);
-    int nodeid;
-    for (int k = 0; k < dht_candidate.occur.m_num; ++k) {
-        nodeid=dht_candidate.occur[k];
-        temp_bounds[k]= MP(nodeid,dht_candidate[nodeid]);
+    temp_bounds.resize(dht.cur);
+    int nodeid, cur = 0;
+    for (int k = 0; k < dht.occur.m_num; ++k) {
+        nodeid = dht.occur[k];
+        if (dht.exist(nodeid))
+            temp_bounds[cur++] = MP(nodeid, lower_bounds_dht[nodeid]);
     }
-
     //sort topk nodes by lower bound
     partial_sort_copy(temp_bounds.begin(), temp_bounds.end(), topk_dhts.begin(), topk_dhts.end(),
                       [](pair<int, double> const &l, pair<int, double> const &r) { return l.second > r.second; });
@@ -1263,18 +1646,20 @@ bool if_stop2(bool &fora_flag, double raw_epsilon, int & candidate_num) {
     //for topk nodes, upper-bound/low-bound <= 1+epsilon
     double ratio = 0.0;
     double largest_ratio = 0.0;
+    cout << "topk:\t";
     for (auto &node: topk_dhts) {
+        cout << node.first << "\t" << node.second << endl;
         topk_filter.insert(node.first, 1);
         ratio = upper_bounds_dht[node.first] / lower_bounds_dht[node.first];
-        if (ratio > largest_ratio)
+        if (stop && ratio > largest_ratio)
             largest_ratio = ratio;
-        if (ratio > error) {
-            stop= false;
-            break;
+        if (ratio > real_epsilon + 1) {
+            stop = false;
+            //break;
             //return false;
         }
     }
-
+    cout << endl;
     // INFO("ratio checking passed--------------------------------------------------------------");
     //for remaining NO. k+1 to NO. n nodes, low-bound of k > the max upper-bound of remaining nodes
     /*int actual_exist_ppr_num = lower_bounds.occur.m_num;
@@ -1283,26 +1668,30 @@ bool if_stop2(bool &fora_flag, double raw_epsilon, int & candidate_num) {
     double low_bound_k = topk_pprs[actual_k].second;*/
     double low_bound_k = topk_dhts[config.k - 1].second;
     if (low_bound_k <= config.delta) {
-        stop= false;
+        stop = false;
         //return false;
     }
     //确定有多少个bippr的候选点
-    candidate_num=0;
-    for (int m = 0; m < dht_candidate.occur.m_num; ++m) {
-        nodeid=dht_candidate.occur[m];
-        if (dht_candidate.notexist(nodeid))continue;
+    candidate_num = 0;
+    INFO(low_bound_k);
+    for (int m = 0; m < dht.occur.m_num; ++m) {
+        nodeid = dht.occur[m];
+        if (dht.notexist(nodeid))continue;
         candidate_num++;
         if (topk_filter.exist(nodeid)) continue;
-        double upper_temp=upper_bounds_dht[nodeid];
-        if (stop== true &&upper_bounds_dht[nodeid]>low_bound_k*error){
-            if (upper_bounds_dht[nodeid]>(1+raw_epsilon)/(1-raw_epsilon)*lower_bounds_dht[nodeid]){
-                dht_candidate.erase(nodeid);
+        //cout<<nodeid<<"\t"<<dht[nodeid]<<"\t"<<upper_bounds_dht[nodeid]<<"\t"<<lower_bounds_dht[nodeid]<<endl;
+        double upper_temp = upper_bounds_dht[nodeid];
+        if (stop == true && upper_bounds_dht[nodeid] > low_bound_k * (1 + real_epsilon)) {
+            if (upper_bounds_dht[nodeid] > (1 + real_epsilon) / (1 - real_epsilon) * lower_bounds_dht[nodeid]) {
+                //cout<<nodeid<<"\t"<<dht[nodeid]<<"\t"<<upper_bounds_dht[nodeid]<<"\t"<<lower_bounds_dht[nodeid]<<endl;
+                dht.erase(nodeid);
                 candidate_num--;
-            }else{
+            } else {
                 stop = false;
             }
-        } else if(stop== false&&upper_bounds_dht[nodeid]<low_bound_k){
-            dht_candidate.erase(nodeid);
+        } else if (stop == false && upper_bounds_dht[nodeid] < low_bound_k) {
+            //cout<<nodeid<<"\t"<<dht[nodeid]<<"\t"<<upper_bounds_dht[nodeid]<<"\t"<<lower_bounds_dht[nodeid]<<endl;
+            dht.erase(nodeid);
             candidate_num--;
         }
     }
@@ -1310,6 +1699,25 @@ bool if_stop2(bool &fora_flag, double raw_epsilon, int & candidate_num) {
     return stop;
 }
 
+/*
+ppr_bi[nodeid]=0.2
+ppr_bi[nodeid]=0.21971
+upper_bounds_self[nodeid]=0.274638
+
+ppr_bi[nodeid]=0.285333
+ppr_bi[nodeid]=0.285999
+upper_bounds_self[nodeid]=0.302515
+ * 262860:	0.0238329	0.0211118	0.228543	0.2		0.119165	0.0923754
+ * 212918:	0.00761607	0.00647206	0.228271	0.2		0.0380803	0.0283525
+topk:	62505	89073	60210	93989	50785	192704	262860	212918	179645	158108	32104	104294	169612	118111	41539	4518	33132	14475	202952	16937
+topk:	62505	89073	60210	93989	50785	192704	212918	179645	158108	32104	104294	169612	118111	41539	33132	4518	14475	202952	16937	134832
+62505:	0.201981	0.201348	0.22712	0.213355		0.946691	0.886527
+50785:	0.0483986	0.0465708	0.211455	0.2		0.241993	0.220239
+60210:	0.110057	0.107662	0.213385	0.200452		0.549043	0.504546
+ * 62505:	0.201742	0.20135	0.22712	0.213355		0.945571	0.886534
+50785:	0.0480772	0.0469477	0.211455	0.2		0.240386	0.222022
+60210:	0.109465	0.108023	0.213385	0.200452		0.546092	0.506235
+ */
 
 inline double calculate_lambda(double rsum, double pfail, double upper_bound, long total_rw_num) {
     return 1.0 / 3 * log(2 / pfail) * rsum / total_rw_num +
@@ -1404,91 +1812,6 @@ void set_ppr_bounds(const Graph &graph, double rsum, long total_rw_num) {
                 lower_bounds[nodeid] = low_bound;
         }
     }
-}
-
-void set_ppr_bi_bounds(const Graph &graph, double rsum, long total_rw_num) {
-    Timer tm(100);
-
-    const static double min_ppr = 1.0 / graph.n;
-    const static double sqrt_min_ppr = sqrt(1.0 / graph.n);
-
-
-    double epsilon_v_div = sqrt(2.67 * rsum * log(2.0 / config.pfail) / total_rw_num);
-    double default_epsilon_v = epsilon_v_div / sqrt_min_ppr;
-
-    int nodeid;
-    double ub_eps_a;
-    double lb_eps_a;
-    double ub_eps_v;
-    double lb_eps_v;
-    double up_bound;
-    double low_bound;
-    // INFO(total_rw_num);
-    // INFO(zero_ppr_upper_bound);
-    //INFO(rsum, 1.0/config.pfail, log(2/config.pfail), zero_ppr_upper_bound, total_rw_num);
-    zero_ppr_upper_bound = calculate_lambda(rsum, config.pfail, zero_ppr_upper_bound, total_rw_num);
-    for (long i = 0; i < ppr.occur.m_num; i++) {
-        nodeid = ppr.occur[i];
-        if (ppr[nodeid] <= 0)
-            continue;
-        double reserve = 0.0;
-        if (fwd_idx.first.exist(nodeid))
-            reserve = fwd_idx.first[nodeid];
-        double epsilon_a = 1.0;
-        if (upper_bounds.exist(nodeid)) {
-            assert(upper_bounds[nodeid] > 0.0);
-            if (upper_bounds[nodeid] > reserve)
-                //epsilon_a = calculate_lambda( rsum, config.pfail, upper_bounds[nodeid] - reserve, total_rw_num);
-                epsilon_a = calculate_lambda(rsum, config.pfail, upper_bounds[nodeid] - reserve, total_rw_num);
-            else
-                epsilon_a = calculate_lambda(rsum, config.pfail, 1 - reserve, total_rw_num);
-        } else {
-            epsilon_a = calculate_lambda(rsum, config.pfail, 1.0 - reserve, total_rw_num);
-        }
-
-        ub_eps_a = ppr[nodeid] + epsilon_a;
-        lb_eps_a = ppr[nodeid] - epsilon_a;
-        if (!(lb_eps_a > 0))
-            lb_eps_a = 0;
-
-        double epsilon_v = default_epsilon_v;
-        if (fwd_idx.first.exist(nodeid) && fwd_idx.first[nodeid] > min_ppr) {
-            if (lower_bounds.exist(nodeid))
-                reserve = max(reserve, lower_bounds[nodeid]);
-            epsilon_v = epsilon_v_div / sqrt(reserve);
-        } else {
-            if (lower_bounds[nodeid] > 0)
-                epsilon_v = epsilon_v_div / sqrt(lower_bounds[nodeid]);
-        }
-
-
-        ub_eps_v = 1.0;
-        lb_eps_v = 0.0;
-        if (1.0 - epsilon_v > 0) {
-            ub_eps_v = ppr[nodeid] / (1.0 - epsilon_v);
-            lb_eps_v = ppr[nodeid] / (1.0 + epsilon_v);
-        }
-
-        up_bound = min(min(ub_eps_a, ub_eps_v), 1.0);
-        low_bound = max(max(lb_eps_a, lb_eps_v), reserve);
-        if (up_bound > 0) {
-            if (!upper_bounds.exist(nodeid))
-                upper_bounds.insert(nodeid, up_bound);
-            else
-                upper_bounds[nodeid] = up_bound;
-        }
-
-        if (low_bound >= 0) {
-            if (!lower_bounds.exist(nodeid))
-                lower_bounds.insert(nodeid, low_bound);
-            else
-                lower_bounds[nodeid] = low_bound;
-        }
-    }
-}
-
-void set_dht_bound() {
-
 }
 
 void set_martingale_bound(double lambda, unsigned long long total_num_rw, int t, double reserve, double rmax,

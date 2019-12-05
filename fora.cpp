@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
     }
 
     INFO(config.version);
-    vector<string> possibleAlgo = {BIPPR, FORA, FWDPUSH, MC, HUBPPR, MC2, FORA_MC};
+    vector<string> possibleAlgo = {BIPPR, FORA, FWDPUSH, MC, HUBPPR, MC2, FORA_MC, MC_DHT,FB, GI,DNE, FLOS};
 
     INFO(config.action);
 
@@ -191,34 +191,7 @@ int main(int argc, char *argv[]) {
         if(config.with_rw_idx)
             deserialize_idx();
 
-        query(graph);
-    }else if(config.action == STATISTIC){
-        config.graph_location = config.get_graph_folder();
-        Graph graph(config.graph_location);
-        INFO(graph.n, graph.m);
-        int color[graph.n + 10];
-        memset(color, 0, sizeof(color));
-        int par[graph.n + 10];
-
-        int cycleNumber = 0;
-        int cycles[graph.n + 10];
-        memset(cycles, 0, sizeof(cycles));
-        ofstream file;
-        file.open("cycles.txt", ios::app);
-        for (int i = 1; i < graph.n; i++) {
-            if (color[i] == 0) {
-                cout<<"color["<<i<<"]"<<endl;
-                dfs_cycle(i, 0, color, par, cycleNumber, cycles, file, graph);
-            }
-        }
-        file.close();
-        file.open("statistic.txt", ios::app);
-        file << "cyclenumber: " << cycleNumber << "\n";
-        cout << "lenth 2: " << cycles[2] << "\n";
-        for (int i = 3; i < graph.n; i++) {
-            cout << "length " << i << ": " << cycles[i] << "\n";
-        }
-        file.close();
+        query_dht(graph);
     }
     else if (config.action == GEN_SS_QUERY){
         config.graph_location = config.get_graph_folder();
@@ -311,8 +284,8 @@ int main(int argc, char *argv[]) {
 
         INFO("finihsed initing parameters");
         INFO(graph.n, graph.m);
-
-        gen_exact_topk(graph);
+        gen_exact_self(graph);
+        //gen_exact_topk(graph);
     }
     else if(config.action == BUILD){
         config.graph_location = config.get_graph_folder();

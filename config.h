@@ -32,11 +32,11 @@ const string STATISTIC = "statistic";
 const string QUERY = "query";
 const string GEN_SS_QUERY = "generate-ss-query";
 const string TOPK = "topk";
-const string TOPK_LKX = "topk_lkx";
 const string BUILD = "build";
 const string GEN_EXACT_TOPK = "gen-exact-topk";
 //const string ASSVERSION = "version";
 const string BATCH_TOPK = "batch-topk";
+const string TOPK_LKX = "topk_lkx";
 
 const string BIPPR = "bippr";
 const string FORA = "fora";
@@ -45,21 +45,31 @@ const string MC = "montecarlo";
 const string MC2 = "montecarlo2";
 const string HUBPPR = "hubppr";
 const string FORA_MC="fora_mc";
+const string MC_DHT = "mc_dht";
+const string FB ="fora_bippr";
+const string FLOS = "flos";
+const string GI = "gobal_iteration";
+const string DNE = "dne";
 
 //用作计时
 const int MC_QUERY = 1;
-const int MC_QUERY2 = 11;
 const int BIPPR_QUERY = 2;
 const int FORA_QUERY = 3;
-const int FORA_MC_QUERY = 31;
 const int HUBPPR_QUERY = 4;
 const int FWD_LU = 5;
 const int RONDOM_WALK = 6;
-const int RONDOM_WALK2 = 61;
 const int SOURCE_DIST = 7;
 const int SORT_MAP = 8;
 const int BWD_LU = 9;
 const int PI_QUERY = 10;
+const int MC_QUERY2 = 11;
+const int FORA_MC_QUERY = 12;
+const int RONDOM_WALK2 = 13;
+const int MC_DHT_QUERY = 14;
+const int FB_QUERY = 15;
+const int FLOS_QUERY = 16;
+const int GI_QUERY = 17;
+const int DNE_QUERY = 18;
 
 const int DFS_CYCLE =111;
 
