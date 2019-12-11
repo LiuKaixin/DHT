@@ -136,7 +136,7 @@ inline void save_exact_topk_ppr(){
     boost::archive::text_oarchive oa(ofs);
     oa << exact_topk_pprs;
 }
-inline void save_self_ppr(const vector<double> &ppr_self){
+inline void save_self_ppr(const map<int ,double> &ppr_self){
     string filename = get_self_ppr_file();
     std::ofstream ofs(filename);
     boost::archive::text_oarchive oa(ofs);
@@ -153,6 +153,31 @@ inline void load_exact_topk_ppr(){
     ia >> exact_topk_pprs;
 
     INFO(exact_topk_pprs.size());
+}
+inline map<int ,double> load_exact_self_ppr(){
+    map<int ,double> ppr_self;
+    string filename = get_self_ppr_file();
+    if(!exists_test(filename)){
+        INFO("No exact self ppr file", filename);
+        return ppr_self;
+    }
+    std::ifstream ifs(filename);
+    boost::archive::text_iarchive ia(ifs);
+    ia >> ppr_self;
+    INFO(ppr_self.size());
+    return ppr_self;
+}
+inline vector<double> load_exact_self_ppr_vec(){
+    vector<double>ppr_self;
+    string filename = get_self_ppr_file();
+    if(!exists_test(filename)){
+        INFO("No exact self ppr file", filename);
+        return ppr_self;
+    }
+    std::ifstream ifs(filename);
+    boost::archive::text_iarchive ia(ifs);
+    ia >> ppr_self;
+    return ppr_self;
 }
 
 inline string get_idx_file_name(){

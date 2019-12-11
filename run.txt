@@ -1,3 +1,48 @@
+fora_bippr_topk
+
+{
+            Timer timer(FWD_LU);
+            forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, lowest_delta_rmax,
+                                                  forward_from); //forward propagation, obtain reserve and residual
+        }
+        INFO(config.delta,config.rmax,config.omega,fwd_idx.second.occur.m_size);
+        bool run_bippr=bippr_query_with_fora_topk(graph, rsum, candidate,lowest_delta_rmax_2, backward_from);
+
+        for (int j = 0; j < ppr.occur.m_num; ++j) {
+            int node =ppr.occur[j];
+            if (!isfinite(ppr[node])||ppr[node]<0)
+                cout<<node<<"->"<<ppr[node]<<endl;
+        }
+        if (config.delta < threshold)
+            set_dht_bounds(candidate);
+        //compute_ppr_with_fwdidx_topk_with_bound(graph, rsum);
+        if (if_stop_dht(candidate,raw_epsilon) || config.delta <= min_delta) {
+            for(auto item:candidate){
+                int node=item.first;
+                dht.insert(node,ppr[node]/ppr_bi[node]);
+            }
+            break;
+        } else {
+            //计算两者的复杂度，给出config2的epsilon
+            INFO(candidate.size());
+            if (config.delta < threshold && candidate.size() > 0 && run_bippr) {
+                double cost_fo=config.rmax*graph.m*(2*config.epsilon/3+2)*log(2/config.pfail)/config.delta/config.epsilon/config.epsilon/2;
+                cost_fo/=candidate.size();
+                cost_fo+=1/config2.rmax;
+                double epsilon_new=sqrt(3*log(2/config2.pfail)/config2.delta)/cost_fo;
+                config2.epsilon = min (config.epsilon,epsilon_new);
+                INFO(config2.epsilon);
+                /*
+                config2.epsilon = min(config2.epsilon,
+                                      double(candidate.size()) * config.epsilon *sqrt(config.delta / config2.delta / graph.n));
+                cout << double(candidate.size()) * config.epsilon * sqrt(config.delta / config2.delta / graph.n)
+                     << endl;
+                     */
+            }
+            config.delta = max(min_delta, config.delta / 2.0);  // otherwise, reduce delta to delta/2
+
+        }
+
 topk_lkx  --prefix ./data/ --dataset webstanford --epsilon 0.5 --query_size 20 --k 20
 
 topk_lkx  --prefix ./data/ --dataset webstanford --epsilon 0.5 --query_size 20 --k 20

@@ -651,7 +651,7 @@ static string replace(std::string str, const std::string &from, const std::strin
 }
 
 // unit is kilobyte (KB)
-inline int get_proc_memory(){
+inline long long get_proc_memory(){
     struct rusage r_usage;
     getrusage(RUSAGE_SELF,&r_usage);
     return r_usage.ru_maxrss;

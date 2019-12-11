@@ -34,6 +34,7 @@ const string GEN_SS_QUERY = "generate-ss-query";
 const string TOPK = "topk";
 const string BUILD = "build";
 const string GEN_EXACT_TOPK = "gen-exact-topk";
+const string GEN_EXACT_SELF = "gen-exact-self";
 //const string ASSVERSION = "version";
 const string BATCH_TOPK = "batch-topk";
 const string TOPK_LKX = "topk_lkx";
@@ -50,6 +51,7 @@ const string FB ="fora_bippr";
 const string FLOS = "flos";
 const string GI = "gobal_iteration";
 const string DNE = "dne";
+const string FB_RAW = "fb_raw";
 
 //用作计时
 const int MC_QUERY = 1;
@@ -70,6 +72,8 @@ const int FB_QUERY = 15;
 const int FLOS_QUERY = 16;
 const int GI_QUERY = 17;
 const int DNE_QUERY = 18;
+const int FBRAW_QUERY = 19;
+const int PI_QUERY_SELF = 20;
 
 const int DFS_CYCLE =111;
 

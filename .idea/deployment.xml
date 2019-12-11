@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" serverName="Remote Host (678f15b5-8077-4c47-a26d-4240e365f227)" exclude=".svn;.cvs;.idea;.DS_Store;.git;.hg;*.hprof;*.pyc;graph.txt;*.idx*;*.info">
+    <serverData>
+      <paths name="Remote Host (678f15b5-8077-4c47-a26d-4240e365f227)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/lkx/fora_lkx" local="$PROJECT_DIR$" />
+          </mappings>
+          <excludedPaths>
+            <excludedPath local="true" path="$PROJECT_DIR$/." />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug-remote-host" />
+            <excludedPath local="true" path="$PROJECT_DIR$/cmake-build-debug-remote" />
+          </excludedPaths>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>

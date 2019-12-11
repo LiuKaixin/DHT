@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
     }
 
     INFO(config.version);
-    vector<string> possibleAlgo = {BIPPR, FORA, FWDPUSH, MC, HUBPPR, MC2, FORA_MC, MC_DHT,FB, GI,DNE, FLOS};
+    vector<string> possibleAlgo = {BIPPR, FORA, FWDPUSH, MC, HUBPPR, MC2, FORA_MC, MC_DHT,FB, GI,DNE, FLOS,FB_RAW};
 
     INFO(config.action);
 
@@ -284,8 +284,24 @@ int main(int argc, char *argv[]) {
 
         INFO("finihsed initing parameters");
         INFO(graph.n, graph.m);
+
+        set<int> candidate_node=gen_exact_topk(graph);
+        //gen_exact_self(graph,candidate_node);
+    }
+    else if (config.action == GEN_EXACT_SELF){
+        config.graph_location = config.get_graph_folder();
+        Graph graph(config.graph_location);
+        INFO("load graph finish");
+        init_parameter(config, graph);
+
+        if(config.exact_pprs_folder=="" || !exists_test(config.exact_pprs_folder))
+            config.exact_pprs_folder = config.graph_location;
+
+        INFO("finihsed initing parameters");
+        INFO(graph.n, graph.m);
+
+        //set<int> candidate_node=gen_exact_topk(graph);
         gen_exact_self(graph);
-        //gen_exact_topk(graph);
     }
     else if(config.action == BUILD){
         config.graph_location = config.get_graph_folder();
