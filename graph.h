@@ -71,13 +71,27 @@ public:
         assert_file_exist("graph file", graph_file);
         FILE *fin = fopen(graph_file.c_str(), "r");
         int t1, t2;
-        while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
-            assert(t1 < n);
-            assert(t2 < n);
-            if(t1 == t2) continue;
-            g[t1].push_back(t2);
-            gr[t2].push_back(t1);
+        if (data_folder.find("dblp2010")!=string::npos||data_folder.find("orkut")!=string::npos){
+            while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
+                assert(t1 < n);
+                assert(t2 < n);
+                if(t1 == t2) continue;
+                g[t1].push_back(t2);
+                gr[t2].push_back(t1);
+                g[t2].push_back(t1);
+                gr[t1].push_back(t2);
+            }
+            m*=2;
+        } else {
+            while (fscanf(fin, "%d%d", &t1, &t2) != EOF) {
+                assert(t1 < n);
+                assert(t2 < n);
+                if(t1 == t2) continue;
+                g[t1].push_back(t2);
+                gr[t2].push_back(t1);
+            }
         }
+
     }
 
     void dfs_cycle(int u, int p, int color[], int par[], int &cyclenumber, int cycles[], ofstream &file) {

@@ -120,6 +120,7 @@ public:
     bool multithread = false;
     bool with_rw_idx = false;
     bool query_high_degree = false;
+    bool direct_graph = true;
     // int num_rw = 10;
 
     double omega; // 1/omega  omega = # of random walk

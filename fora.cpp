@@ -155,6 +155,9 @@ int main(int argc, char *argv[]) {
         else if (arg == "--dataset") {
             config.graph_alias = argv[i + 1];
         }
+        else if (arg == "--direct") {
+            config.direct_graph=atoi(argv[i+1]);
+        }
 
         else if (arg.substr(0, 2) == "--") {
             cerr << "command not recognize " << arg << endl;
@@ -326,7 +329,7 @@ int main(int argc, char *argv[]) {
     }
 
     Timer::show();
-    if(config.action == QUERY || config.action == TOPK){
+    if(config.action == QUERY || config.action == TOPK|| config.action == TOPK_LKX){
         Counter::show();
         auto args = combine_args(argc, argv);
         Saver::save_json(config, result, args);

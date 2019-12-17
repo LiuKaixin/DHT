@@ -656,44 +656,20 @@ bool compare_fora_bippr_cost(int k, int m = 0, double rsum = 0) {
     return ratio > 1;
 }
 
-bool test_run_fora(int candidate_size, long m, int n, double old_f_rmax, double old_b_rmax, double rsum = 0) {
+bool test_run_fora(int candidate_size, long m, int n, double forward_counter, double real_num_rw) {
     if (candidate_size == 0)
         return true;
-
-    double factor_rmax = (log(m / n) / log((1 - config.alpha) / m * n) - 1);
-    double product_rmax = log(
-            m * (2 * config.epsilon / 3 + 2) * log(2 / config.pfail) / config.epsilon / config.epsilon / (config.delta/2));
-    double rmax_new = exp(product_rmax / factor_rmax);
-    double k_new = log((m/n) * rmax_new) / log((1 - config.alpha) / (m/n));
-    double k = log((m/n) * config.rmax) / log((1 - config.alpha) / (m/n));
-    double cost_fp=pow((m/n),k_new)-pow((m/n),k);
-    /*
-   double cost_fp;
-   if (config.rmax * m < 1) {
-       double threshold_k = log(n) / log(m / n);
-       double k = log(m * config.rmax) / log(1 - config.alpha);
-       cost_fp = (k - threshold_k - 1) * m;
-   } else {
-       double k = log(m / n * config.rmax) / log((1 - config.alpha) / m * n);
-       cost_fp = m / n / (m / n - 1) * pow(m / n, k);
-   }*/
-    //double cost_fp=m*(1+log(m*config.rmax)/log(1-config.alpha));
-    //先尝试对第一步骤进行
-    double cost_rw_fora = fwd_idx.second.occur.m_size - fwd_idx.first.occur.m_size;
-    if (cost_rw_fora < rsum * config.omega) {
-        cost_rw_fora = rsum * config.omega;
+    double new_rmax2 = config2.epsilon/2 * sqrt(config2.delta * m / n /config2.alpha/  (2 + config2.epsilon/2) / log(2.0 / config2.pfail));
+    double cost_new=forward_counter*1.4+real_num_rw*2;
+    double cost_bi=candidate_size*2/new_rmax2*m/n/config2.alpha;
+    double cost_bi_old=candidate_size/config2.rmax*m/n/config2.alpha;
+    INFO(cost_new,candidate_size*2/new_rmax2,cost_bi);
+    INFO(2/new_rmax2*m/n/config2.alpha,new_rmax2);
+    if (ppr_bi.occur.m_num==0){
+        return cost_new<cost_bi;
+    }else{
+        return cost_new<cost_bi-cost_bi_old;
     }
-    double cost_bippr = candidate_size / config2.epsilon * sqrt((m / n) * 3 * log(2 / config2.pfail) / config2.delta);
-    INFO(cost_fp, cost_rw_fora, cost_bippr);
-    return cost_fp + cost_rw_fora < cost_bippr;
-    /*
-    double cost_foward_push = log((m/n) * config.rmax) / log((1 - config.alpha) / (m/n)) + 1;
-    cost_foward_push = pow((m/n), cost_foward_push);
-
-    double cost_bippr = candidate_size*() / config2.epsilon * sqrt((m/n) * 3 * log(2 / config2.pfail) / config2.delta);
-    INFO(cost_foward_push, cost_rw_fora, cost_bippr);
-    return cost_foward_push + cost_rw_fora < cost_bippr;*/
-
 }
 
 inline void fora_bippr_setting(int n, long long m, double ratio, double raw_epsilon, bool topk = false) {
@@ -707,27 +683,14 @@ inline void fora_bippr_setting(int n, long long m, double ratio, double raw_epsi
 
         config2.delta = config2.alpha;
     }
-    /*
-    double deg = m * 1.0 / n;
-    double factor_fp=log(deg)/log((1-config.alpha)/deg);
-    double value =
-            m * 3 * log(2 / config.pfail) / config.epsilon / config.epsilon / config.delta;
-    config.rmax=log(-1*value/factor_fp*(deg-1)/deg)/(factor_fp-1);
-    config.rmax=exp(config.rmax)/deg;
-    INFO(value,factor_fp);
-
-    if (config.rmax * m < 1) {
-        config.rmax = config.epsilon * config.epsilon * config.delta / 3 /log(2 / config.pfail);
-        INFO(config.rmax * m);
-    }
-    */
     double factor_rmax = (log(m / n) / log((1 - config.alpha) / m * n) - 1);
     double product_rmax = log(
             m * (2 * config.epsilon / 3 + 2) * log(2 / config.pfail) / config.epsilon / config.epsilon / config.delta);
     double product_rmax2= -1*log(m / n)*log(m / n)/log((1-config.alpha)/(m / n))-log(m / n)/log(m / n-1);
     config.rmax = exp((product_rmax+product_rmax2) / factor_rmax);
+    //INFO(factor_rmax,product_rmax,config.rmax);
     //config.rmax= config.epsilon*config.epsilon*config.delta/m/3/log(2/config.pfail)/(-1*log(1-config.alpha));
-    //config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail));
+    config.rmax = config.epsilon * sqrt(config.delta / 3 / m / log(2 / config.pfail));
     //config.rmax = config.epsilon * sqrt(config.delta / 3 / n / log(2 / config.pfail));
     //config.rmax =config.epsilon / n * sqrt(config.delta * m / 3 / config.alpha / log(2 / config.pfail));
     //config.rmax = config.epsilon / n * sqrt(config.delta * m / 3  / log(2 / config.pfail));
@@ -738,7 +701,7 @@ inline void fora_bippr_setting(int n, long long m, double ratio, double raw_epsi
     config.omega = (2 + config.epsilon) * log(2 / config.pfail) / config.delta / config.epsilon / config.epsilon;
 
 
-    config2.rmax = config2.epsilon * sqrt(config2.delta * m / n / config.alpha / 3 / log(2.0 / config2.pfail));
+    config2.rmax = config2.epsilon * sqrt(config2.delta * m / n /config2.alpha/  (2 + config2.epsilon) / log(2.0 / config2.pfail));
     //config2.rmax = config2.epsilon * sqrt(m * config2.delta / 3.0 / n / log(2.0 / config2.pfail));
     //config2.rmax = config2.epsilon * sqrt( m * config2.delta / 3.0 / n / log(2.0 / config2.pfail)/8);
     // config.omega = m/config.rmax;
@@ -1057,7 +1020,7 @@ void compute_precision_dht(int v) {
     if (exact_topk_dhts.size() > 1 && exact_topk_dhts.find(v) != exact_topk_dhts.end()) {
 
         unordered_map<int, double> topk_map;
-        for (auto &p: topk_pprs) {
+        for (auto &p: topk_dhts) {
             if (p.second > 0) {
                 topk_map.insert(p);
             }
@@ -1482,36 +1445,18 @@ reverse_local_update_linear_dht_topk(int s, const Graph &graph, double lowest_rm
 
 
 void init_bounds_self(const Graph &graph) {
-    vector<int> out_neighbors(graph.n, -1);
-    for (int j = 0; j < graph.n; ++j) {
-        double p_back = 0;
-        for (int out_nei:graph.g[j]) {
-            out_neighbors[out_nei] = j;
-            if (j == 281772) {
-                INFO(out_nei);
-            }
-        }
-        int re_num = 0;
-        for (int in_nei:graph.gr[j]) {
-            if (out_neighbors[in_nei] == j) {
-                if (j == 281772) {
-                    INFO(in_nei);
-                }
-                re_num++;
-                p_back += 1.0 / graph.g[in_nei].size();
-            }
-        }
 
-        p_back /= 1.0 * graph.g[j].size();
-        p_back += (1 - re_num * 1.0 / graph.g[j].size());
-        lower_bounds_self[j] = config.alpha + (1 - config.alpha) * (1 - config.alpha) * config.alpha * p_back;
-        upper_bounds_self[j] = lower_bounds_self[j] +
-                               (1 - config.alpha) * (1 - config.alpha) * (1 - config.alpha) * config.alpha *
-                               (1 - p_back);
-        if (j == 281772) {
-            INFO(p_back, lower_bounds_self[j], upper_bounds_self[j]);
+    upper_bounds_self.reset_values(1.0);
+    lower_bounds_self.reset_values(config2.alpha);
+    /*
+    upper_bounds_self.reset_values(1.0/(2-config2.alpha));
+    lower_bounds_self.reset_values(config2.alpha);
+    for (int k = 0; k < graph.n; ++k) {
+        if (graph.g[k].empty()){
+            upper_bounds_self[k]=1;
         }
     }
+ */
 }
 
 void forward_local_update_linear(int s, const Graph &graph, double &rsum, double rmax, double init_residual = 1.0) {
@@ -2363,10 +2308,7 @@ void set_ppr_self_bounds(const Graph &graph, const unordered_map<int, bool> &can
             INFO(low_bound, up_bound);
             cout << nodeid << endl;
         }
-        if (up_bound / low_bound > large_ratio)
-            large_ratio = up_bound / low_bound;
     }
-    INFO(large_ratio);
 }
 
 void set_dht_bounds(unordered_map<int, bool> &candidate) {
