@@ -99,7 +99,7 @@ void montecarlo_query_dht(int v, const Graph &graph) {
 }
 
 void montecarlo_query_dht_topk(int v, const Graph &graph) {
-    Timer timer(MC_DHT_QUERY);
+    Timer timer(0);
 
     rw_counter.reset_zero_values();
     unordered_map<int, pair<int, int>> occur;//为每个点建立索引，pair中第一个是上一次的路径号，下一个是出现过的次数
@@ -116,7 +116,7 @@ void montecarlo_query_dht_topk(int v, const Graph &graph) {
     for (auto item:occur) {
         int node_id = item.first;
         //INFO(node_id,item.second.second);
-        dht.insert(node_id,item.second.second * 1.0 / config.omega);
+        dht.insert(node_id, item.second.second * 1.0 / config.omega);
         //dht[node_id] = item.second.second * 1.0 / config.omega;
     }
 
@@ -156,7 +156,7 @@ void dne_query(int v, const Graph &graph) {
 
     dht.reset_zero_values();
     double deg_graph = graph.m / graph.n;
-    int dne_m = ceil(pow(deg_graph, log(graph.n) / log(deg_graph / (1 - config.alpha))));
+    int dne_m = 30000;//ceil(pow(deg_graph, log(graph.n) / log(deg_graph / (1 - config.alpha))));
     INFO(dne_m);
     dhe_query_basic(v, v, dne_m, graph);
     /*
@@ -223,7 +223,7 @@ void bippr_query(int v, const Graph &graph) {
 #endif
 }
 
-void bippr_query_fb_raw(const Graph &graph) {
+void bippr_query_fb_raw(const Graph &graph, double threshold) {
     ppr_bi.initialize(graph.n);
     //ppr_self
     rw_counter.initialize(graph.n);
@@ -232,13 +232,14 @@ void bippr_query_fb_raw(const Graph &graph) {
     fill(rw_counter.occur.m_data, rw_counter.occur.m_data + graph.n, -1);
     vector<int> idx(graph.n, -1), node_with_r(graph.n), q(graph.n);
     int pointer_r = 0;
+    int total_rw_b = 0;
     //static unordered_map<int, int > idx;///
     INFO(config2.omega);
     assert(config2.rmax < 1);
     unsigned long long backward_counter = 0, old_num_total_rw = num_total_rw;
     int counter = 0;
     for (int k = 0; k < ppr.m_num; ++k) {
-        if (ppr[k] <= 0)continue;
+        if (ppr[k] <= threshold)continue;
         counter++;
         {
             Timer tm(RONDOM_WALK);
@@ -247,6 +248,7 @@ void bippr_query_fb_raw(const Graph &graph) {
             assert(residual < config2.rmax);
             unsigned long num_s_rw = ceil(config2.omega);
             num_total_rw += num_s_rw;
+            total_rw_b += num_s_rw;
             for (unsigned long i = 0; i < num_s_rw; i++) {
                 int destination = random_walk(k, graph);
                 if (rw_counter.occur[destination] != k) {
@@ -281,6 +283,8 @@ void bippr_query_fb_raw(const Graph &graph) {
         int nodeid = ppr_bi.occur[l];
         dht.insert(nodeid, ppr[nodeid] / ppr_bi[nodeid]);
     }
+    INFO(counter);
+    INFO(total_rw_b);
 }
 
 void bippr_query_fb_raw_topk_with_bound(unordered_map<int, bool> &candidate, const Graph &graph) {
@@ -376,31 +380,36 @@ void bippr_query_with_fora(const Graph &graph, double check_rsum) {
     assert(config2.rmax < 1);
     unsigned long long backward_counter = 0, old_num_total_rw = num_total_rw;
     int counter = 0;
+    unsigned long num_s_rw_real;
     for (int k = 0; k < ppr.m_num; ++k) {
-        if (ppr[k] <= 0 && (fwd_idx.second.notexist(k) || fwd_idx.second[k] <= 0))continue;
+        //执行一遍，如果r>0或者ppr>delta则执行，最后检查一遍。
+        if (ppr[k] <= config.delta && (fwd_idx.second.notexist(k) || fwd_idx.second[k] <= 0))continue;
         counter++;
         {
             Timer tm(RONDOM_WALK);
             double residual = fwd_idx.second[k] > 0 ? fwd_idx.second[k] : 0;
-            assert(residual < config.rmax);
-            assert(residual < config2.rmax);
             unsigned long num_s_rw = ceil(residual / check_rsum * num_random_walk);
-            unsigned long num_s_rw_real = ceil(config2.omega) > num_s_rw ? ceil(config2.omega) : num_s_rw;
-            double a_s = residual / check_rsum * num_random_walk / num_s_rw;
+            if (ppr[k]>config.delta)
+                num_s_rw_real = ceil(config2.omega) > num_s_rw ? ceil(config2.omega) : num_s_rw;
+            else
+                num_s_rw_real=num_s_rw;
 
-            double ppr_incre = a_s * check_rsum / num_random_walk * num_s_rw / num_s_rw_real;
-            num_total_rw += num_s_rw;
+            double ppr_incre = residual / num_s_rw_real;
+            num_total_rw += num_s_rw_real;
             for (unsigned long i = 0; i < num_s_rw_real; i++) {
                 int destination = random_walk(k, graph);
                 ppr[destination] += ppr_incre;
-                if (rw_counter.occur[destination] != k) {
-                    rw_counter.occur[destination] = k;
-                    rw_counter[destination] = 1;
-                } else {
-                    ++rw_counter[destination];
+                if (ppr[k]>config.delta){
+                    if (rw_counter.occur[destination] != k) {
+                        rw_counter.occur[destination] = k;
+                        rw_counter[destination] = 1;
+                    } else {
+                        ++rw_counter[destination];
+                    }
                 }
             }
         }
+        if (ppr[k]<=config.delta) continue;
         if (config2.rmax < 1.0) {
             Timer tm(BWD_LU);
             backward_counter += reverse_local_update_linear_dht(k, graph, idx, node_with_r, pointer_r, q);
@@ -410,13 +419,47 @@ void bippr_query_with_fora(const Graph &graph, double check_rsum) {
                 int nodeid = node_with_r[j];
                 double residual = bwd_idx.second[nodeid];
                 if (rw_counter.occur[nodeid] == k) {
-                    ppr_bi[k] += rw_counter[nodeid] * 1.0 / config2.omega * residual;
+                    ppr_bi[k] += rw_counter[nodeid] * 1.0 / num_s_rw_real * residual;
                 }
             }
         } else {
             assert(rw_counter.occur[k] == k);
             if (rw_counter.occur[k] == k) {
-                ppr_bi.insert(k, rw_counter[k] / 1.0 / config2.omega);
+                ppr_bi.insert(k, rw_counter[k] / 1.0 / num_s_rw_real);
+            }
+        }
+    }
+    for (int m = 0; m < ppr.m_num; ++m) {
+        if (ppr[m]>config.delta&&ppr_bi.notexist(m)){
+            {
+                Timer tm(RONDOM_WALK);
+                num_s_rw_real= ceil(config2.omega);
+                num_total_rw += num_s_rw_real;
+                for (unsigned long i = 0; i < num_s_rw_real; i++) {
+                    int destination = random_walk(m, graph);
+                    if (rw_counter.occur[destination] != m) {
+                        rw_counter.occur[destination] = m;
+                        rw_counter[destination] = 1;
+                    } else {
+                        ++rw_counter[destination];
+                    }
+                }
+            }
+            if (config2.rmax < 1.0) {
+                Timer tm(BWD_LU);
+                backward_counter += reverse_local_update_linear_dht(m, graph, idx, node_with_r, pointer_r, q);
+                ppr_bi.insert(m, bwd_idx.first[m]);
+                for (int j = 0; j < pointer_r; ++j) {
+                    int nodeid = node_with_r[j];
+                    double residual = bwd_idx.second[nodeid];
+                    if (rw_counter.occur[nodeid] == m) {
+                        ppr_bi[m] += rw_counter[nodeid] * 1.0 / num_s_rw_real * residual;
+                    }
+                }
+            } else {
+                if (rw_counter.occur[m] == m) {
+                    ppr_bi.insert(m, rw_counter[m] / 1.0 / num_s_rw_real);
+                }
             }
         }
     }
@@ -440,7 +483,8 @@ void bippr_query_with_fora(const Graph &graph, double check_rsum) {
 }
 
 int bippr_query_candidate(const Graph &graph, const unordered_map<int, bool> &candidate, const double &lowest_rmax,
-                           unordered_map<int, vector<int>> & backward_from) {
+                          unordered_map<int, vector<int>> &backward_from) {
+    Timer timer(BIPPR_QUERY);
     ppr_bi.clean();
     static vector<int> in_backward(graph.n);
     static vector<int> in_next_backward(graph.n);
@@ -448,8 +492,8 @@ int bippr_query_candidate(const Graph &graph, const unordered_map<int, bool> &ca
     std::fill(in_next_backward.begin(), in_next_backward.end(), -1);
     fill(rw_counter.occur.m_data, rw_counter.occur.m_data + graph.n, -1);
     unsigned long long backward_counter = 0, old_num_total_rw = num_total_rw;
-    for(auto item:candidate){
-        int node_id=item.first;
+    for (auto item:candidate) {
+        int node_id = item.first;
         {
             Timer tm(DFS_CYCLE);
             num_total_rw += ceil(config2.omega);
@@ -482,13 +526,14 @@ int bippr_query_candidate(const Graph &graph, const unordered_map<int, bool> &ca
         }
     }
     set_ppr_self_bounds(graph, candidate);
+    /*
     INFO(num_total_rw - old_num_total_rw);
     INFO(backward_counter, candidate.size(), 1 / config2.rmax, config2.epsilon, config2.delta);
 
     cout << "ratio of bw and ra:\t" << backward_counter / candidate.size() / config2.omega << endl;
     cout << "ratio of bw and true ra:\t" << backward_counter * 1.0 / (num_total_rw - old_num_total_rw) << endl;
     cout << "ratio of ra and esti ra:\t" << (num_total_rw - old_num_total_rw) / candidate.size() / config2.omega
-         << endl;
+         << endl;*/
     num_total_bi += backward_counter;
     return backward_counter;
 }
@@ -703,80 +748,47 @@ void compute_ppr_with_fwdidx(const Graph &graph, double check_rsum) {
     INFO(num_random_walk);
     // INFO(num_random_walk);
     //num_total_rw += num_random_walk;
+    int real_random_walk_f = 0;
 
     {
         Timer timer(RONDOM_WALK); //both rand-walk and source distribution are related with num_random_walk
-        //Timer tm(SOURCE_DIST);
-        if (config.with_rw_idx) {
-            fwd_idx.second.occur.Sort();
-            for (long i = 0; i < fwd_idx.second.occur.m_num; i++) {
-                int source = fwd_idx.second.occur[i];
-                double residual = fwd_idx.second[source];
-                unsigned long num_s_rw = ceil(residual / check_rsum * num_random_walk);
-                double a_s = residual / check_rsum * num_random_walk / num_s_rw;
+        for (long i = 0; i < fwd_idx.second.occur.m_num; i++) {
+            int source = fwd_idx.second.occur[i];
+            double residual = fwd_idx.second[source];
+            unsigned long num_s_rw = ceil(residual / check_rsum * num_random_walk);
+            double a_s = residual / check_rsum * num_random_walk / num_s_rw;
 
-                double ppr_incre = a_s * check_rsum / num_random_walk;
+            double ppr_incre = a_s * check_rsum / num_random_walk;
 
-                num_total_rw += num_s_rw;
-
-                //for each source node, get rand walk destinations from previously generated idx or online rand walks
-                if (num_s_rw >
-                    rw_idx_info[source].second) { //if we need more destinations than that in idx, rand walk online
-                    for (unsigned long k = 0; k < rw_idx_info[source].second; k++) {
-                        int des = rw_idx[rw_idx_info[source].first + k];
-                        ppr[des] += ppr_incre;
-                    }
-                    num_hit_idx += rw_idx_info[source].second;
-
-                    for (unsigned long j = 0; j < num_s_rw - rw_idx_info[source].second; j++) { //rand walk online
-                        int des = random_walk(source, graph);
-                        ppr[des] += ppr_incre;
-                    }
-                } else { // using previously generated idx is enough
-                    for (unsigned long k = 0; k < num_s_rw; k++) {
-                        int des = rw_idx[rw_idx_info[source].first + k];
-                        ppr[des] += ppr_incre;
-                    }
-                    num_hit_idx += num_s_rw;
-                }
-            }
-        } else { //rand walk online
-            for (long i = 0; i < fwd_idx.second.occur.m_num; i++) {
-                int source = fwd_idx.second.occur[i];
-                double residual = fwd_idx.second[source];
-                unsigned long num_s_rw = ceil(residual / check_rsum * num_random_walk);
-                double a_s = residual / check_rsum * num_random_walk / num_s_rw;
-
-                double ppr_incre = a_s * check_rsum / num_random_walk;
-
-                num_total_rw += num_s_rw;
-                for (unsigned long j = 0; j < num_s_rw; j++) {
-                    int des = random_walk(source, graph);
-                    ppr[des] += ppr_incre;
-                }
+            num_total_rw += num_s_rw;
+            real_random_walk_f += num_s_rw;
+            for (unsigned long j = 0; j < num_s_rw; j++) {
+                int des = random_walk(source, graph);
+                ppr[des] += ppr_incre;
             }
         }
     }
+    INFO(real_random_walk_f);
 }
 
-void compute_ppr_with_fwdidx_topk_with_bound_alias(const Graph& graph, double check_rsum){
+int compute_ppr_with_fwdidx_topk_with_bound_alias(const Graph &graph, double check_rsum) {
     compute_ppr_with_reserve();
 
-    if(check_rsum == 0.0)
-        return;
+    if (check_rsum == 0.0)
+        return 0;
 
-    long num_random_walk = ceil(config.omega*check_rsum);
-    long real_num_rand_walk=num_random_walk;
-    int count_rw_fora_iter=0;
-    double ppr_incre = check_rsum/num_random_walk;
+    long num_random_walk = ceil(config.omega * check_rsum);
+    long real_num_rand_walk = num_random_walk;
+    int count_rw_fora_iter = 0;
+    double ppr_incre = check_rsum / num_random_walk;
     {
         Timer timer(RONDOM_WALK); //both rand-walk and source distribution are related with num_random_walk
 
         //构建 alias
         //先取出非零的r来
-        vector<int> smaller,larger;
-        unordered_map <int ,double> prob;
-        vector<pair<int,int>> alias;
+        vector<int> smaller, larger;
+        unordered_map<int, double> prob;
+        vector<pair<int, int>> alias;
         {
             Timer timer1(999);
             prob.reserve(fwd_idx.second.occur.m_num);
@@ -785,63 +797,66 @@ void compute_ppr_with_fwdidx_topk_with_bound_alias(const Graph& graph, double ch
             alias.reserve(fwd_idx.second.occur.m_num);
             for (int k = 0; k < fwd_idx.second.occur.m_num; ++k) {
                 int node = fwd_idx.second.occur[k];
-                if (fwd_idx.second[node]>0){
+                if (fwd_idx.second[node] > 0) {
                     prob.insert(MP(node, fwd_idx.second[node]));
                 }
             }
-            int total=prob.size();
-            for(auto &item:prob){
-                item.second*=total;
-                if (item.second<1.0){
+            int total = prob.size();
+            for (auto &item:prob) {
+                item.second *= total;
+                if (item.second < 1.0) {
                     smaller.emplace_back(item.first);
-                }else if(item.second>1.0){
+                } else if (item.second > 1.0) {
                     larger.emplace_back(item.first);
-                }else{
-                    alias.emplace_back(MP(item.first,item.first));
+                } else {
+                    alias.emplace_back(MP(item.first, item.first));
                 }
             }
-            while (!smaller.empty()&&!larger.empty()){
+            while (!smaller.empty() && !larger.empty()) {
                 int small = smaller.back();
                 smaller.pop_back();
                 int large = larger.back();
                 larger.pop_back();
-                alias.emplace_back(MP(small,large));
-                prob[large]-=(1-prob[small]);
-                if (prob[large]<1){
+                alias.emplace_back(MP(small, large));
+                prob[large] -= (1 - prob[small]);
+                if (prob[large] < 1) {
                     smaller.emplace_back(large);
-                }else if(prob[large]>1){
+                } else if (prob[large] > 1) {
                     larger.emplace_back(large);
-                }else{
-                    alias.emplace_back(MP(large,large));
+                } else {
+                    alias.emplace_back(MP(large, large));
                 }
             }
         }
         for (int l = 0; l < num_random_walk; ++l) {
-            int tmp=int(1.0*rand()/RAND_MAX*alias.size());//随机取一列
-            double seed=1.0*rand()/RAND_MAX;
-            int source=-1;
-            if (seed<prob[alias[tmp].first]){
-                source=alias[tmp].first;
-            }else{
-                source=alias[tmp].second;
+            int tmp = int(1.0 * rand() / RAND_MAX * alias.size());//随机取一列
+            double seed = 1.0 * rand() / RAND_MAX;
+            int source = -1;
+            if (seed < prob[alias[tmp].first]) {
+                source = alias[tmp].first;
+            } else {
+                source = alias[tmp].second;
             }
             int des = random_walk(source, graph);
-            if(!ppr.exist(des))
+            if (!ppr.exist(des))
                 ppr.insert(des, ppr_incre);
             else
                 ppr[des] += ppr_incre;
         }
     }
 
-    INFO(real_num_rand_walk,count_rw_fora_iter);
-    if(config.delta < threshold){
+    INFO(real_num_rand_walk, count_rw_fora_iter);
+    if (config.delta < threshold) {
         set_ppr_bounds(graph, check_rsum, real_num_rand_walk);
-    } else{
-        zero_ppr_upper_bound = calculate_lambda(check_rsum,  config.pfail, zero_ppr_upper_bound, real_num_rand_walk);
+    } else {
+        zero_ppr_upper_bound = calculate_lambda(check_rsum, config.pfail, zero_ppr_upper_bound, real_num_rand_walk);
     }
-    num_total_rw+=real_num_rand_walk;
+    num_total_rw += real_num_rand_walk;
+    return real_num_rand_walk;
 }
-int compute_ppr_with_fwdidx_topk_with_bound(const Graph &graph, double check_rsum, unordered_map<int,vector<int>> &rw_saver) {
+
+int compute_ppr_with_fwdidx_topk_with_bound(const Graph &graph, double check_rsum,
+                                            unordered_map<int, vector<int>> &rw_saver) {
     compute_ppr_with_reserve();
 
     if (check_rsum == 0.0)
@@ -849,7 +864,7 @@ int compute_ppr_with_fwdidx_topk_with_bound(const Graph &graph, double check_rsu
 
     long num_random_walk = config.omega * check_rsum;
     long real_num_rand_walk = 0;
-int count_rw_fora_iter=0,map_counter=0;
+    int count_rw_fora_iter = 0, map_counter = 0;
     {
         Timer timer(RONDOM_WALK); //both rand-walk and source distribution are related with num_random_walk
 
@@ -862,28 +877,9 @@ int count_rw_fora_iter=0,map_counter=0;
                 double a_s = residual / check_rsum * num_random_walk / num_s_rw;
 
                 real_num_rand_walk += num_s_rw;
-
+                num_total_rw += num_s_rw;
                 double ppr_incre = a_s * check_rsum / num_random_walk;
-                if(num_s_rw<0&&num_s_rw<4){
-                    int des;
-                    vector<int> tmp= rw_saver[source];
-                    for (int j = 0; j < tmp.size(); ++j) {
-                        des=tmp[j];
-                        if (!ppr.exist(des))
-                            ppr.insert(des, ppr_incre);
-                        else
-                            ppr[des] += ppr_incre;
-                    }
-                    for (int k = tmp.size(); k < num_s_rw; ++k) {
-                        des = random_walk(source, graph);
-                        rw_saver[source].emplace_back(des);
-                        if (!ppr.exist(des))
-                            ppr.insert(des, ppr_incre);
-                        else
-                            ppr[des] += ppr_incre;
-                    }
-                    continue;
-                }
+
                 for (long j = 0; j < num_s_rw; j++) {
                     int des = random_walk(source, graph);
                     if (!ppr.exist(des))
@@ -892,21 +888,20 @@ int count_rw_fora_iter=0,map_counter=0;
                         ppr[des] += ppr_incre;
 
                 }
-                if (num_s_rw>0) count_rw_fora_iter++;
             }
         }
     }
     if (config.delta < threshold)
         set_ppr_bounds(graph, check_rsum, real_num_rand_walk);
-    INFO(count_rw_fora_iter,real_num_rand_walk);
-    INFO(map_counter);
     return real_num_rand_walk;
 }
 
 void fora_bippr_query(int v, const Graph &graph, double raw_epsilon) {
     Timer timer(FB_QUERY);
-    double rsum = 1.0, ratio = 1;//sqrt(config.alpha);
-    vector<int> forward_from(graph.n);
+    double rsum = 1.0, ratio = graph.n;//sqrt(config.alpha);
+    fora_bippr_setting(graph.n, graph.m, ratio, raw_epsilon);
+    static vector<int> forward_from;
+    forward_from.reserve(graph.n);
     forward_from.push_back(v);
     //fora_bippr_setting(graph.n, graph.m, 1,raw_epsilon);
     {
@@ -917,10 +912,18 @@ void fora_bippr_query(int v, const Graph &graph, double raw_epsilon) {
             fwd_idx.first.clean();  //reserve
             fwd_idx.second.clean();  //residual
             fwd_idx.second.insert(v, rsum);
-            forward_local_update_linear_topk_dht(v, graph, rsum, config.rmax, 0, forward_from);
+            long forward_push_num = 0;
+            bool flag= true,first= true;
+            do {
+                cout << endl;
+                //display_setting();
+                if (!first)
+                    flag=check_cost(rsum, ratio, graph.n, graph.m, forward_push_num, raw_epsilon);
+                first= false;
+                forward_push_num += forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, 0, forward_from);
+            } while (flag);
             /*
             //display_setting();
-            //fora_bippr_setting(graph.n, graph.m, ratio, raw_epsilon);
             cout << "epsilon:\t" << config.epsilon << "\t" << config2.epsilon << endl;
             cout << "omega:\t" << config.omega << "\t" << config2.omega << endl;
             cout << (1 + config.epsilon) / (1 - config2.epsilon) << endl;
@@ -931,8 +934,9 @@ void fora_bippr_query(int v, const Graph &graph, double raw_epsilon) {
             */
             //forward_local_update_linear(v, graph, rsum, config.rmax); //forward propagation, obtain reserve and residual
         }
-        // compute_ppr_with_fwdidx(graph);
         bippr_query_with_fora(graph, rsum);
+        //compute_ppr_with_fwdidx(graph, rsum);
+        //bippr_query_fb_raw(graph, config.delta);
     }
     INFO(config2.omega * fwd_idx.second.occur.m_num);
     int num_rw_bi = num_total_rw;
@@ -998,243 +1002,123 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
     candidate.clear();
     display_setting();
     bool run_fora = true;
-    unordered_map<int ,vector<int>> rw_saver;
+    unordered_map<int, vector<int>> rw_saver;
     //调用fora，但终止条件不同
-    num_total_fo=0;
-    num_total_bi=0;
+    num_total_fo = 0;
+    num_total_bi = 0;
+    int init_rw_num = num_total_rw;
     while (config.delta >= min_delta) {
-        double old_f_rmax=config.rmax,old_b_rmax=config2.rmax,forward_counter,backward_counter,real_num_rand_walk;
+        double old_f_rmax = config.rmax, old_b_rmax = config2.rmax, forward_counter, backward_counter, real_num_rand_walk;
+        int old_candidate_size = candidate.size();
         fora_bippr_setting(graph.n, graph.m, 1, 1, true);
         if (run_fora) {
             num_iter_topk++;
             {
                 Timer timer(FWD_LU);
-                forward_counter=forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, lowest_delta_rmax,
-                                                 forward_from); //forward propagation, obtain reserve and residual
+                forward_counter = forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, lowest_delta_rmax,
+                                                                        forward_from); //forward propagation, obtain reserve and residual
             }
-            real_num_rand_walk=compute_ppr_with_fwdidx_topk_with_bound(graph, rsum, rw_saver);
+            real_num_rand_walk = compute_ppr_with_fwdidx_topk_with_bound(graph, rsum, rw_saver);
+            //real_num_rand_walk = compute_ppr_with_fwdidx_topk_with_bound_alias(graph, rsum);
 
             //INFO(forward_counter/real_num_rand_walk);
             //INFO(real_num_rand_walk/rsum/config.omega);
         } else {
-            cout << "ratio of bw/esti bw bw/esti old:\t" << num_total_bi  <<"\t"<< num_total_bi/(graph.m/graph.n/config.alpha/config2.rmax) / candidate.size()<<"\t"<<num_total_bi*config2.rmax/ candidate.size()<<endl;
-            backward_counter=bippr_query_candidate(graph, candidate, lowest_delta_rmax_2, backward_from);
-            cout << "ratio of bw and esti bw:\t" << backward_counter / candidate.size()/(graph.m/graph.n/config2.alpha/ config2.rmax-graph.m/graph.n/config2.alpha/ old_b_rmax) << endl;
-            cout << "ratio of esti bw and esti ra:\t" << (1/ config2.rmax-1/old_b_rmax)/ config2.omega << endl;
+            //cout << "ratio of bw/esti bw bw/esti old:\t" << num_total_bi  <<"\t"<< num_total_bi/(graph.m/graph.n/config.alpha/config2.rmax) / candidate.size()<<"\t"<<num_total_bi*config2.rmax/ candidate.size()<<endl;
+            backward_counter = bippr_query_candidate(graph, candidate, lowest_delta_rmax_2, backward_from);
+            //cout << "ratio of bw and esti bw:\t" << backward_counter / candidate.size()/(graph.m/graph.n/config2.alpha/ config2.rmax-graph.m/graph.n/config2.alpha/ old_b_rmax) << endl;
+            //cout << "ratio of esti bw and esti ra:\t" << (1/ config2.rmax-1/old_b_rmax)/ config2.omega << endl;
         }
-        if (config.delta < threshold){
+        if (config.delta < threshold) {
             set_dht_bounds(candidate);
         }
-        INFO(config.delta,config.rmax,config.omega,fwd_idx.second.occur.m_size);
+        INFO(config.delta, config.rmax, config.omega, fwd_idx.second.occur.m_size, candidate.size());
         //compute_ppr_with_fwdidx_topk_with_bound(graph, rsum);
-        if (if_stop_dht(candidate, raw_epsilon) || config.delta <= min_delta) {
+        if (if_stop_dht(candidate, raw_epsilon, min_delta) ||
+            (config.delta <= min_delta && config2.epsilon <= min_epsilon)) {
+
             dht.clean();
             for (auto item:candidate) {
                 int node = item.first;
                 dht.insert(node, ppr[node] / ppr_bi[node]);
             }
             break;
-        } else {
+        } else if (config.delta > min_delta && config2.epsilon > min_epsilon) {
             //计算两者的复杂度，给出config2的epsilon
-            INFO(candidate.size());
 
-            run_fora=test_run_fora(candidate.size(),graph.m,graph.n,forward_counter,real_num_rand_walk);
-            if (run_fora){
+            run_fora = test_run_fora(candidate.size(), graph.m, graph.n, forward_counter, real_num_rand_walk);
+            if (run_fora) {
                 config.delta = max(min_delta, config.delta / 2.0);  // otherwise, reduce delta to delta/2
-            }else{
-                config2.epsilon/=2;
+            } else {
+                config2.epsilon /= 2;
             }
-        }
-    }
-    return;
-
-}
-
-void fora_bippr_query_topk_old(int v, const Graph &graph) {
-    //ppr fwd_idx.first fwd_idx.second的occur都是有效的
-    Timer timer(0);
-    const static double min_delta = config.alpha / graph.n;
-    INFO(min_delta);
-    const static double init_delta = 1.0 / 4;
-    const static double min_epsilon = sqrt(1.0 / graph.n / config.alpha);
-    const static double raw_epsilon = config.epsilon;
-    threshold = (1.0 - config.ppr_decay_alpha) / pow(500, config.ppr_decay_alpha) /
-                pow(graph.n, 1 - config.ppr_decay_alpha);//?
-    const static double new_pfail = 1.0 / graph.n / graph.n / log(graph.n);
-//sqrt(0.2*281904/0.00010715135)/500
-    config.pfail = new_pfail;  // log(1/pfail) -> log(1*n/pfail)
-    config.pfail /= 2;
-    config2 = config;
-    //config.epsilon = config.epsilon / (2 + config.epsilon);//(1+new_epsilon)/(1-new_epsilon)<=1+epsilon
-    double ratio_f_b = sqrt(config.alpha * graph.n / threshold) / config.k;
-    config2.delta = config.alpha;
-    config.delta = init_delta;
-
-    const static double lowest_delta_rmax =
-            config.epsilon * sqrt(min_delta / 3 / graph.n / log(2 / new_pfail));//更新后的r_max
-    const static double lowest_delta_rmax_2 =
-            min_epsilon * sqrt(config2.delta / 3 / log(2.0 / new_pfail));
-
-    double rsum = 1.0;
-    //迭代起始点
-    static vector<int> forward_from(graph.n);
-    forward_from.push_back(v);
-    static unordered_map<int, vector<int>> backward_from;
-    //p和r等
-    fwd_idx.first.clean();  //reserve
-    fwd_idx.second.clean();  //residual
-    fwd_idx.second.insert(v, rsum);
-    multi_bwd_idx_p.clear();
-    multi_bwd_idx_r.clear();
-    ///config2的delta在后面确定！
-    ///zero_ppr_upper_bound = 1.0;
-    //先过一遍拿到上下限
-    upper_bounds.reset_one_values();//不可使用上下界的occur遍历了
-    lower_bounds.reset_zero_values();
-    upper_bounds_self.reset_one_values();
-    lower_bounds_self.reset_values(config2.alpha);
-    //set<int> candidate;
-    unordered_map<int, bool> candidate;
-    candidate.clear();
-    display_setting();
-    //调用fora，但终止条件不同
-    while (config.delta >= min_delta) {
-        fora_bippr_setting(graph.n, graph.m, 1, 1, true);
-
-        num_iter_topk++;
-
-        {
-            Timer timer(FWD_LU);
-            forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, lowest_delta_rmax,
-                                                  forward_from); //forward propagation, obtain reserve and residual
-        }
-        INFO(config.delta, config.rmax, config.omega, fwd_idx.second.occur.m_size);
-        bool run_bippr = bippr_query_with_fora_topk(graph, rsum, candidate, lowest_delta_rmax_2, backward_from);
-
-        for (int j = 0; j < ppr.occur.m_num; ++j) {
-            int node = ppr.occur[j];
-            if (!isfinite(ppr[node]) || ppr[node] < 0)
-                cout << node << "->" << ppr[node] << endl;
-        }
-        if (config.delta < threshold)
-            set_dht_bounds(candidate);
-        //compute_ppr_with_fwdidx_topk_with_bound(graph, rsum);
-        if (if_stop_dht(candidate, raw_epsilon) || config.delta <= min_delta) {
-            for (auto item:candidate) {
-                int node = item.first;
-                dht.insert(node, ppr[node] / ppr_bi[node]);
-            }
-            break;
-        } else {
-            //计算两者的复杂度，给出config2的epsilon
-            INFO(candidate.size());
-            if (config.delta < threshold && candidate.size() > 0 && run_bippr) {
-                double cost_fo =
-                        config.rmax * graph.m * (2 * config.epsilon / 3 + 2) * log(2 / config.pfail) / config.delta /
-                        config.epsilon / config.epsilon / 2;
-                cost_fo /= candidate.size();
-                cost_fo += 1 / config2.rmax;
-                double epsilon_new = sqrt(3 * log(2 / config2.pfail) / config2.delta) / cost_fo;
-                config2.epsilon = min(config.epsilon, epsilon_new);
-                INFO(config2.epsilon);
-                /*
-                config2.epsilon = min(config2.epsilon,
-                                      double(candidate.size()) * config.epsilon *sqrt(config.delta / config2.delta / graph.n));
-                cout << double(candidate.size()) * config.epsilon * sqrt(config.delta / config2.delta / graph.n)
-                     << endl;
-                     */
+        } else if (config.delta > min_delta) {
+            run_fora = test_run_fora(candidate.size(), graph.m, graph.n, forward_counter, real_num_rand_walk);
+            if (run_fora == false) {
+                dht.clean();
+                for (auto item:candidate) {
+                    int node = item.first;
+                    dht.insert(node, ppr[node] / ppr_bi[node]);
+                }
+                break;
             }
             config.delta = max(min_delta, config.delta / 2.0);  // otherwise, reduce delta to delta/2
-
+        } else {
+            if (config2.epsilon == raw_epsilon) {
+                config2.epsilon = max(min_epsilon, config2.epsilon / 2);
+                run_fora = false;
+            } else {
+                //如果变化还很大，就继续吧
+                if (old_candidate_size > candidate.size() * 1.01) {
+                    config2.epsilon = max(min_epsilon, config2.epsilon / 2);
+                    run_fora = false;
+                    continue;
+                }
+                run_fora = test_run_fora(candidate.size(), graph.m, graph.n, forward_counter, real_num_rand_walk);
+                if (run_fora == true) {
+                    dht.clean();
+                    for (auto item:candidate) {
+                        int node = item.first;
+                        dht.insert(node, ppr[node] / ppr_bi[node]);
+                    }
+                    break;
+                } else {
+                    config2.epsilon = max(min_epsilon, config2.epsilon / 2);
+                }
+            }
         }
     }
+    INFO(num_total_rw - init_rw_num);
     return;
 
 }
 
-void fb_raw_query(int v, const Graph &graph) {
-    Timer tm(FBRAW_QUERY);
-    double rsum = 1.0;
 
+void fb_raw_query(int v, const Graph &graph, bool topk = false) {
+    Timer tm(FBRAW_QUERY);
+    double rsum = 1.0, threshold;
+    display_setting();
     {
         Timer timer(FWD_LU);
         forward_local_update_linear(v, graph, rsum, config.rmax); //forward propagation, obtain reserve and residual
     }
     // compute_ppr_with_fwdidx(graph);
     compute_ppr_with_fwdidx(graph, rsum);
-    bippr_query_fb_raw(graph);
-}
-
-void fb_raw_query_topk(int v, const Graph &graph) {
-    Timer timer(0);
-    display_setting();
-    const static double min_delta = config.alpha / graph.n;
-    const static double init_delta = 1.0 / 4;
-    const static double min_epsilon = sqrt(1.0 / graph.n / config.alpha);
-    const static double raw_epsilon = config.epsilon;
-    threshold = (1.0 - config.ppr_decay_alpha) / pow(500, config.ppr_decay_alpha) /
-                pow(graph.n, 1 - config.ppr_decay_alpha);//?
-    const static double new_pfail = 1.0 / graph.n / graph.n / log(graph.n);
-
-    config.pfail = new_pfail;  // log(1/pfail) -> log(1*n/pfail)
-    config.pfail /= 2;
-    config.epsilon = config.epsilon / (2 + config.epsilon);//(1+new_epsilon)/(1-new_epsilon)<=1+epsilon
-    config2 = config;
-    config2.delta = config.alpha;
-    config.delta = init_delta;
-
-    const static double lowest_delta_rmax =
-            config.epsilon * sqrt(min_delta / 3 / graph.n / log(2 / new_pfail));//更新后的r_max
-    const static double lowest_delta_rmax_2 =
-            min_epsilon * sqrt(config2.delta / 3 / log(2.0 / new_pfail));
-
-    double rsum = 1.0;
-    //迭代起始点
-    static vector<int> forward_from(graph.n);
-    forward_from.push_back(v);
-    static unordered_map<int, vector<int>> backward_from;
-    //p和r等
-    fwd_idx.first.clean();  //reserve
-    fwd_idx.second.clean();  //residual
-    fwd_idx.second.insert(v, rsum);
-    multi_bwd_idx_p.clear();
-    multi_bwd_idx_r.clear();
-    ///config2的delta在后面确定！
-    ///zero_ppr_upper_bound = 1.0;
-    //先过一遍拿到上下限
-    upper_bounds.reset_one_values();
-    lower_bounds.reset_zero_values();
-    init_bounds_self(graph);
-    //set<int> candidate;
-    unordered_map<int, bool> candidate;
-    candidate.clear();
-    unordered_map<int,vector<int>> rw_saver;
-    //调用fora，但终止条件不同
-    while (config.delta >= min_delta) {
-        fora_bippr_setting(graph.n, graph.m, 1, 1, true);
-        num_iter_topk++;
-
-        {
-            Timer timer(FWD_LU);
-            forward_local_update_linear_topk(v, graph, rsum, config.rmax, lowest_delta_rmax,
-                                             forward_from); //forward propagation, obtain reserve and residual
+    if (topk) {
+        static vector<double> temp_ppr;
+        temp_ppr.clear();
+        temp_ppr.resize(graph.n);
+        int size = 0;
+        for (int i = 0; i < graph.n; i++) {
+            if (ppr.m_data[i] > 0)
+                temp_ppr[size++] = ppr.m_data[i];
         }
-        compute_ppr_with_fwdidx_topk_with_bound(graph, rsum,rw_saver);
-        bippr_query_fb_raw_topk_with_bound(candidate, graph);
-        if (config.delta < threshold)
-            set_dht_bounds(candidate);
-        //bippr_query_with_fora_topk(graph, rsum, candidate, lowest_delta_rmax_2, backward_from);
-        if (if_stop_dht(candidate, raw_epsilon) || config.delta <= min_delta) {
-            break;
-        } else {
-            config.delta = max(min_delta, config.delta / 2.0);  // otherwise, reduce delta to delta/2
-            //计算两者的复杂度，给出config2的epsilon
-            config2.epsilon = min(config2.epsilon,
-                                  candidate.size() * config.epsilon * sqrt(config.delta / config2.delta / graph.n));
-        }
+        nth_element(temp_ppr.begin(), temp_ppr.begin() + config.k - 1, temp_ppr.end(), cmp);
+        threshold = temp_ppr[config.k - 1] * config.alpha;
+    } else {
+        threshold = config.delta;
     }
-    return;
-
+    bippr_query_fb_raw(graph, threshold);
 }
 
 void fora_query_basic(int v, const Graph &graph) {
@@ -1300,7 +1184,7 @@ void fora_query_topk_with_bound(int v, const Graph &graph) {
     int iteration = 0;
     upper_bounds.reset_one_values();
     lower_bounds.reset_zero_values();
-unordered_map<int,vector<int>>rw_saver;
+    unordered_map<int, vector<int>> rw_saver;
     while (config.delta >= min_delta) {
         fora_setting(graph.n, graph.m);
         num_iter_topk++;
@@ -1311,7 +1195,7 @@ unordered_map<int,vector<int>>rw_saver;
                                              forward_from); //forward propagation, obtain reserve and residual
         }
 
-        compute_ppr_with_fwdidx_topk_with_bound(graph, rsum,rw_saver);
+        compute_ppr_with_fwdidx_topk_with_bound(graph, rsum, rw_saver);
         if (if_stop() || config.delta <= min_delta) {
             break;
         } else
@@ -1377,11 +1261,13 @@ void get_topk2(int v, Graph &graph) {
         topk_dht();
         //INFO(topk_dhts);
     } else if (config.algo == DNE) {///DNE在数据集比较大的时候就变得缓慢
+        Timer timer(0);
         dne_query(v, graph);
         //topk_dht();
     } else if (config.algo == FB_RAW) {
         //先使用FORA，然后使用1/alpha ~ 1/(2-alpha)这个范围，计算这些点的BiPPR
-        fb_raw_query_topk(v, graph);
+        fb_raw_query(v, graph, true);
+        //fb_raw_query_topk(v, graph);
         topk_dht();
     } else if (config.algo == FB) {
         fora_bippr_query_topk(v, graph);
@@ -1393,11 +1279,11 @@ void get_topk2(int v, Graph &graph) {
     // not FORA, so it's single source
     // no need to change k to run again
     /// check top-k results for different k
-    if (config.algo != FB && config.algo != FB_RAW) {
-        compute_precision_for_dif_k(v);
+    if (config.algo == MC_DHT) {
+        compute_precision_for_dif_k_dht(v);
     }
 
-    compute_precision(v);
+    //compute_precision(v);
     compute_precision_dht(v);
 
 #ifdef CHECK_TOP_K_PPR
@@ -1534,6 +1420,7 @@ void gen_exact_self(const Graph &graph) {
     // config.epsilon = 0.5;
     // montecarlo_setting();
     load_exact_topk_ppr();
+    map<int, double> ppr_self_old = load_exact_self_ppr();
     //load_exact_self_ppr();
     //map<int ,double> ppf_self=load_exact_self_ppr();
     //vector<double> ppf_self=load_exact_self_ppr_vec();
@@ -1546,22 +1433,26 @@ void gen_exact_self(const Graph &graph) {
     set<int> candidate_node;
     bwd_idx.first.initialize(graph.n);
     bwd_idx.second.initialize(graph.n);
-    fill(bwd_idx.first.occur.m_data, bwd_idx.first.occur.m_data + graph.n, -1);
-    fill(bwd_idx.second.occur.m_data, bwd_idx.second.occur.m_data + graph.n, -1);
     vector<int> idx(graph.n, -1), node_with_r(graph.n), q(graph.n);
     int pointer_r = 0, max_candi_num = ceil(config.k / (2 - config.alpha) / config.alpha);
     int cur = 0;
     for (auto item:exact_topk_pprs) {
+        fill(bwd_idx.first.occur.m_data, bwd_idx.first.occur.m_data + graph.n, -1);
+        fill(bwd_idx.second.occur.m_data, bwd_idx.second.occur.m_data + graph.n, -1);
         if (++cur > config.query_size)break;
         int source_node = item.first;
         INFO(source_node);
         unordered_map<int, double> upper_bound, lower_bound;
+        unordered_map<int, double> upper_bound_self, lower_bound_self;
         vector<int> candidate_s;
         for (int j = 0; j < max_candi_num; ++j) {
             int node = item.second[j].first;
             double ppr = item.second[j].second;
             config2.rmax = min_rmax;
+            //reverse_local_update_linear(node, graph);
             reverse_local_update_linear_dht(node, graph, idx, node_with_r, pointer_r, q);
+            upper_bound_self[node] = bwd_idx.first[node] + min_rmax;
+            lower_bound_self[node] = bwd_idx.first[node];
             upper_bound[node] = ppr / bwd_idx.first[node];
             lower_bound[node] = ppr / (bwd_idx.first[node] + min_rmax);
             //INFO(node,upper_bound[node],lower_bound[node],ppr,bwd_idx.first[node]);
@@ -1572,14 +1463,17 @@ void gen_exact_self(const Graph &graph) {
             tmp_dht[cur++] = item.second;
         }
         nth_element(tmp_dht.begin(), tmp_dht.begin() + config.k - 1, tmp_dht.end(), cmp);
-        cur=0;
+        cur = 0;
+        //INFO(tmp_dht[config.k - 1]);
         for (auto item:upper_bound) {
             if (item.second >= tmp_dht[config.k - 1]) {
-                cur++;
-                cout<<item.first<<"\t";
-                candidate_node.emplace(item.first);
-            } else{
-                //INFO(item.first,item.second,tmp_dht[config.k - 1]);
+                if (ppr_self_old.find(item.first) == ppr_self_old.end() ||
+                    ppr_self_old.at(item.first) > upper_bound_self[item.first] ||
+                    ppr_self_old.at(item.first) < lower_bound_self[item.first]) {
+                    cur++;
+                    cout << item.first << "\t";
+                    candidate_node.emplace(item.first);
+                }
             }
         }
         INFO(cur);
@@ -1629,14 +1523,14 @@ void gen_exact_self(const Graph &graph) {
     cout << "average generation time (s): " << Timer::used(PI_QUERY_SELF) * 1.0 / query_size << endl;
 
     INFO("combine results...");
-    map<int, double> ppr_self;
+    //map<int, double> ppr_self;
     for (int tid = 0; tid < num_thread; tid++) {
         for (auto &ppv: ppv_self_for_all_core[tid]) {
             //exact_topk_pprs.insert(ppv);
-            ppr_self[ppv.first] = ppv.second;
+            ppr_self_old[ppv.first] = ppv.second;
         }
     }
-    save_self_ppr(ppr_self);
+    save_self_ppr(ppr_self_old);
     //save_exact_topk_ppr();
 }
 
@@ -1820,33 +1714,34 @@ void topk2(Graph &graph) {
     split_line();
 
     load_exact_topk_ppr();
-    map<int ,double> ppr_self = load_exact_self_ppr();
+    map<int, double> ppr_self = load_exact_self_ppr();
     //INFO(ppr_self[62505]);
 
     bwd_idx.first.initialize(graph.n);
     bwd_idx.second.initialize(graph.n);
-    //config.rmax=0.0001;
+    config.rmax=0.0001;
     int cur = 0;
     for (auto item:exact_topk_pprs) {
         if (++cur > config.query_size)break;
         int source_node = item.first;
         true_queries.emplace_back(source_node);
-        INFO(source_node);
+        //INFO(cur);
+        //INFO(source_node);
         unordered_map<int, double> dht;
         vector<pair<int, double>> topk_pprs = item.second;
         for (int k = 0; k < topk_pprs.size(); ++k) {
             int node = topk_pprs[k].first;
 
-            if(ppr_self.find(node)!=ppr_self.end()){
+            if (ppr_self.find(node) != ppr_self.end()) {
                 dht[node] = topk_pprs[k].second / ppr_self.at(node);
                 //INFO(dht[node]);
-            } else{
+            } else {
                 //INFO(node);
                 //reverse_local_update_linear(node,graph);
                 //INFO(topk_pprs[k].second / bwd_idx.first[node]);
             }
         }
-        vector<pair<int, double>> temp_top_dht(config.k);
+        vector<pair<int, double>> temp_top_dht(500);
         partial_sort_copy(dht.begin(), dht.end(), temp_top_dht.begin(), temp_top_dht.end(),
                           [](pair<int, double> const &l, pair<int, double> const &r) { return l.second > r.second; });
         exact_topk_dhts[source_node] = temp_top_dht;
@@ -1856,7 +1751,7 @@ void topk2(Graph &graph) {
     // not FORA, so it's single source
     // no need to change k to run again
     // check top-k results for different k
-    if (config.algo == MC_DHT ) {
+    if (config.algo == MC_DHT) {
         unsigned int step = config.k / 5;
         if (step > 0) {
             for (unsigned int i = 1; i < 5; i++) {
@@ -1885,7 +1780,13 @@ void topk2(Graph &graph) {
         upper_bounds.init_keys(graph.n);
         lower_bounds.init_keys(graph.n);
         ppr.initialize(graph.n);
-        topk_filter.initialize(graph.n);
+        //使用vector代替map，提前预设向量大小为节点大小
+        fwd_idx.first.initialize(graph.n);
+        fwd_idx.second.initialize(graph.n);
+        bwd_idx.first.initialize(graph.n);
+        bwd_idx.second.initialize(graph.n);
+        double raw_epsilon = config.epsilon, ratio = 1;
+        fb_raw_setting(graph.n, graph.m, ratio, raw_epsilon);
     } else if (config.algo == FB) {
         //先利用节点的度得到初步的范围，
         // 另外重复利用RW？
@@ -1910,6 +1811,12 @@ void topk2(Graph &graph) {
     for (int i = 0; i < query_size; i++) {
         cout << i + 1 << ". source node:" << true_queries[i] << endl;
         get_topk2(true_queries[i], graph);
+        if (!config.NDCG) continue;
+        if (config.algo == MC_DHT) {
+            compute_NDCG_for_dif_k_dht(true_queries[i], ppr_self, graph);
+        } else if (config.algo != DNE) {
+            compute_NDCG(true_queries[i], ppr_self, graph);
+        }
         split_line();
     }
 
@@ -2300,6 +2207,146 @@ void batch_topk(Graph &graph) {
         }
 
         // display_time_usage(used_counter, query_size);
+        display_precision_for_dif_k();
+    }
+}
+
+void batch_topk_dht(Graph &graph) {
+    vector<int> queries;
+    load_ss_query(queries);
+    INFO(queries.size());
+    unsigned int query_size = queries.size();
+    query_size = min(query_size, config.query_size);
+    vector<int> true_queries;
+    int used_counter = 0;
+
+    assert(config.k < graph.n - 1);
+    assert(config.k > 1);
+    INFO(config.k);
+
+    split_line();
+
+    load_exact_topk_ppr();
+    map<int, double> ppr_self = load_exact_self_ppr();
+    //INFO(ppr_self[62505]);
+
+    bwd_idx.first.initialize(graph.n);
+    bwd_idx.second.initialize(graph.n);
+    //config.rmax=0.0001;
+    int cur = 0;
+    for (auto item:exact_topk_pprs) {
+        if (++cur > config.query_size)break;
+        int source_node = item.first;
+        true_queries.emplace_back(source_node);
+        //INFO(source_node);
+        unordered_map<int, double> dht;
+        vector<pair<int, double>> topk_pprs = item.second;
+        for (int k = 0; k < topk_pprs.size(); ++k) {
+            int node = topk_pprs[k].first;
+
+            if (ppr_self.find(node) != ppr_self.end()) {
+                dht[node] = topk_pprs[k].second / ppr_self.at(node);
+                //INFO(dht[node]);
+            } else {
+                //INFO(node);
+                //reverse_local_update_linear(node,graph);
+                //INFO(topk_pprs[k].second / bwd_idx.first[node]);
+            }
+        }
+        vector<pair<int, double>> temp_top_dht(config.k);
+        partial_sort_copy(dht.begin(), dht.end(), temp_top_dht.begin(), temp_top_dht.end(),
+                          [](pair<int, double> const &l, pair<int, double> const &r) { return l.second > r.second; });
+        exact_topk_dhts[source_node] = temp_top_dht;
+        //INFO(temp_top_dht);
+    }
+
+    // not FORA, so it's single source
+    // no need to change k to run again
+    // check top-k results for different k
+    if (config.algo == MC_DHT) {
+        unsigned int step = config.k / 5;
+        if (step > 0) {
+            for (unsigned int i = 1; i < 5; i++) {
+                ks.push_back(i * step);
+            }
+        }
+        ks.push_back(config.k);
+        for (auto k: ks) {
+            PredResult rst(0, 0, 0, 0, 0);
+            pred_results.insert(MP(k, rst));
+        }
+    }
+
+    used_counter = 0;
+    if (config.algo == MC_DHT) {
+        rw_counter.initialize(graph.n);
+        dht.initialize(graph.n);
+        montecarlo_setting();
+    } else if (config.algo == DNE) {
+        dht.initialize(graph.n);
+    } else if (config.algo == FB_RAW) {
+        //先使用FORA，然后使用1/alpha ~ 1这个范围，计算这些点的BiPPR
+        fwd_idx.first.initialize(graph.n);
+        fwd_idx.second.initialize(graph.n);
+        rw_counter.init_keys(graph.n);
+        upper_bounds.init_keys(graph.n);
+        lower_bounds.init_keys(graph.n);
+        ppr.initialize(graph.n);
+        //使用vector代替map，提前预设向量大小为节点大小
+        fwd_idx.first.initialize(graph.n);
+        fwd_idx.second.initialize(graph.n);
+        bwd_idx.first.initialize(graph.n);
+        bwd_idx.second.initialize(graph.n);
+        double raw_epsilon = config.epsilon, ratio = 1;
+        fb_raw_setting(graph.n, graph.m, ratio, raw_epsilon);
+    } else if (config.algo == FB) {
+        //先利用节点的度得到初步的范围，
+        // 另外重复利用RW？
+        // 然后维护真实TOPK，计算UB的nth-k，对topk LB进行过滤，在候选集比较小的时候，使用哈希表保存，另外比较成本，使用成本低的。
+        fwd_idx.first.initialize(graph.n);//forward p
+        fwd_idx.second.initialize(graph.n);//forward r
+        rw_counter.init_keys(graph.n);//
+        rw_bippr_counter.init_keys(graph.n);
+        upper_bounds.init_keys(graph.n);
+        lower_bounds.init_keys(graph.n);
+        upper_bounds_self.init_keys(graph.n);
+        upper_bounds_self_init.init_keys(graph.n);
+        lower_bounds_self.init_keys(graph.n);
+        upper_bounds_dht.init_keys(graph.n);
+        lower_bounds_dht.init_keys(graph.n);
+        ppr.initialize(graph.n);
+        ppr_bi.initialize(graph.n);
+        dht.initialize(graph.n);
+        topk_filter.initialize(graph.n);
+    }
+    if (config.algo == MC_DHT || config.algo == DNE) {
+        for (int i = 0; i < query_size; i++) {
+            cout << i + 1 << ". source node:" << true_queries[i] << endl;
+            get_topk2(true_queries[i], graph);
+            if (config.algo == MC_DHT && (graph.data_folder.find("lj"))) {
+                compute_NDCG_for_dif_k_dht(true_queries[i], ppr_self, graph);
+            }
+            split_line();
+        }
+    }
+    for (int i = 0; i < query_size; i++) {
+        cout << i + 1 << ". source node:" << true_queries[i] << endl;
+        get_topk2(true_queries[i], graph);
+        if (config.algo == MC_DHT) {
+            compute_NDCG_for_dif_k_dht(true_queries[i], ppr_self, graph);
+        }
+        compute_NDCG(true_queries[i], ppr_self, graph);
+        split_line();
+    }
+
+    cout << "average iter times:" << num_iter_topk / query_size << endl;
+    display_time_usage(used_counter, query_size);
+    set_result(graph, used_counter, query_size);
+
+    //not FORA, so it's single source
+    //no need to change k to run again
+    // check top-k results for different k
+    if (config.algo == MC_DHT) {
         display_precision_for_dif_k();
     }
 }

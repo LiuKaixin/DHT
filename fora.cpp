@@ -155,8 +155,8 @@ int main(int argc, char *argv[]) {
         else if (arg == "--dataset") {
             config.graph_alias = argv[i + 1];
         }
-        else if (arg == "--direct") {
-            config.direct_graph=atoi(argv[i+1]);
+        else if (arg == "--ndcg") {
+            config.NDCG=atoi(argv[i + 1]);
         }
 
         else if (arg.substr(0, 2) == "--") {

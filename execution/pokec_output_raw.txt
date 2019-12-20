@@ -1,3 +1,112 @@
+vector<int> queries;
+    load_ss_query(queries);
+    INFO(queries.size());
+    unsigned int query_size = queries.size();
+    query_size = min(query_size, config.query_size);
+    int used_counter = 0;
+
+    assert(config.k < graph.n - 1);
+    assert(config.k > 1);
+    INFO(config.k);
+
+    split_line();
+
+    used_counter = 0;
+    if (config.algo == FORA) {
+        fwd_idx.first.initialize(graph.n);
+        fwd_idx.second.initialize(graph.n);
+        rw_counter.init_keys(graph.n);
+        upper_bounds.init_keys(graph.n);
+        lower_bounds.init_keys(graph.n);
+        ppr.initialize(graph.n);
+        topk_filter.initialize(graph.n);
+    } else if (config.algo == MC) {
+        rw_counter.initialize(graph.n);
+        ppr.initialize(graph.n);
+        montecarlo_setting();
+    } else if (config.algo == BIPPR) {
+        bippr_setting(graph.n, graph.m);
+        rw_counter.initialize(graph.n);
+        bwd_idx.first.initialize(graph.n);
+        bwd_idx.second.initialize(graph.n);
+        ppr.initialize(graph.n);
+    } else if (config.algo == FWDPUSH) {
+        fwdpush_setting(graph.n, graph.m);
+        fwd_idx.first.initialize(graph.n);
+        fwd_idx.second.initialize(graph.n);
+        ppr.initialize(graph.n);
+    } else if (config.algo == HUBPPR) {
+        hubppr_topk_setting(graph.n, graph.m);
+        rw_counter.initialize(graph.n);
+        upper_bounds.init_keys(graph.n);
+        if (config.with_rw_idx) {
+            hub_counter.initialize(graph.n);
+            load_hubppr_oracle(graph);
+        }
+        residual_maps.resize(graph.n);
+        reserve_maps.resize(graph.n);
+        map_lower_bounds.resize(graph.n);
+        for (int v = 0; v < graph.n; v++) {
+            residual_maps[v][v] = 1.0;
+            map_lower_bounds[v] = MP(v, 0);
+        }
+        updated_pprs.initialize(graph.n);
+    }
+
+    unsigned int step = config.k / 5;
+    if (step > 0) {
+        for (unsigned int i = 1; i < 5; i++) {
+            ks.push_back(i * step);
+        }
+    }
+    ks.push_back(config.k);
+    for (auto k: ks) {
+        PredResult rst(0, 0, 0, 0, 0);
+        pred_results.insert(MP(k, rst));
+    }
+
+    // not FORA, so it's of single source
+    // no need to change k to run again
+    // check top-k results for different k
+    if (config.algo != FORA && config.algo != HUBPPR) {
+        for (int i = 0; i < query_size; i++) {
+            cout << i + 1 << ". source node:" << queries[i] << endl;
+            get_topk(queries[i], graph);
+            split_line();
+        }
+
+        display_time_usage(used_counter, query_size);
+        set_result(graph, used_counter, query_size);
+
+        display_precision_for_dif_k();
+    } else { // for FORA, when k is changed, run algo again
+        for (unsigned int k: ks) {
+            config.k = k;
+            INFO("========================================");
+            INFO("k is set to be ", config.k);
+            result.topk_recall = 0;
+            result.topk_precision = 0;
+            result.real_topk_source_count = 0;
+            Timer::clearAll();
+            for (int i = 0; i < query_size; i++) {
+                cout << i + 1 << ". source node:" << queries[i] << endl;
+                get_topk(queries[i], graph);
+                split_line();
+            }
+            pred_results[k].topk_precision = result.topk_precision;
+            pred_results[k].topk_recall = result.topk_recall;
+            pred_results[k].real_topk_source_count = result.real_topk_source_count;
+
+            cout << "k=" << k << " precision=" << result.topk_precision / result.real_topk_source_count
+                 << " recall=" << result.topk_recall / result.real_topk_source_count << endl;
+            cout << "Average query time (s):" << Timer::used(used_counter) / query_size << endl;
+            Timer::reset(used_counter);
+        }
+
+        // display_time_usage(used_counter, query_size);
+        display_precision_for_dif_k();
+    }
+}
 /Users/liukaixin/Project/fora-master/fora query --algo fora_bippr --prefix ./data/ --dataset pokec --epsilon 0.5 --query_size 20
 --------------start------------2019-12-03 19:57:55
 args:query --algo fora_bippr --prefix ./data/ --dataset pokec --epsilon 0.5 --query_size 20

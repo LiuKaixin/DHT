@@ -120,7 +120,7 @@ public:
     bool multithread = false;
     bool with_rw_idx = false;
     bool query_high_degree = false;
-    bool direct_graph = true;
+    bool NDCG = true;
     // int num_rw = 10;
 
     double omega; // 1/omega  omega = # of random walk
@@ -206,6 +206,7 @@ public:
     double topk_avg_relative_err;
     double topk_precision;
     double topk_recall;
+    double topk_NDCG;
     // double topk_max_add_err;
     // double topk_avg_add_err;
     int real_topk_source_count;
@@ -241,6 +242,7 @@ public:
         data.put("topk avg relative error", topk_avg_relative_err/real_topk_source_count);
         data.put("topk precision", topk_precision/real_topk_source_count);
         data.put("topk recall", topk_recall/real_topk_source_count);
+        data.put("topk NDCG", topk_NDCG/real_topk_source_count);
         return data;
     }
 
