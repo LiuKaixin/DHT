@@ -7,8 +7,6 @@
 #include <list>
 #include <sstream>
 #include <cmath>
-//#include <queue>
-//#include <boost/lockfree/queue.hpp>
 #include <fstream>
 #include <string>
 #include <cstdio>
@@ -21,10 +19,7 @@
 #include <cstdio>
 #include <vector>
 #include <map>
-//#include <deque>
 #include <queue>
-//#include <chrono>
-//#include <boost/atomic.hpp>
 #include <atomic>
 #include <thread>
 #include <future>
@@ -439,7 +434,24 @@ static inline string &rtrim(string &s) {
 }
 
 static inline string &trim(string &s) { return ltrim(rtrim(s)); }
+/*
+static inline std::string & ltrim(std::string & str)
+{
+    auto it2 =  std::find_if( str.begin() , str.end() , [](char ch){ return !std::isspace<char>(ch , std::locale::classic() ) ; } );
+    str.erase( str.begin() , it2);
+    return str;
+}
 
+static inline std::string & rtrim(std::string & str)
+{
+    auto it1 =  std::find_if( str.rbegin() , str.rend() , [](char ch){ return !std::isspace<char>(ch , std::locale::classic() ) ; } );
+    str.erase( it1.base() , str.end() );
+    return str;
+}
+
+
+static inline string &trim(string &s) { return ltrim(rtrim(s)); }
+ */
 string __n_variable(string t, int n);
 
 #define __expand_nv(x) __n_variable(t, x)<< t##x << " "

@@ -537,6 +537,97 @@ int bippr_query_candidate(const Graph &graph, const unordered_map<int, bool> &ca
     num_total_bi += backward_counter;
     return backward_counter;
 }
+int bippr_query_candidate_with_idx(const Graph &graph, const unordered_map<int, bool> &candidate, const double &lowest_rmax,
+                          unordered_map<int, vector<int>> &backward_from) {
+    Timer timer(BIPPR_QUERY);
+    ppr_bi.clean();
+    static vector<int> in_backward(graph.n);
+    static vector<int> in_next_backward(graph.n);
+    std::fill(in_backward.begin(), in_backward.end(), -1);
+    std::fill(in_next_backward.begin(), in_next_backward.end(), -1);
+    fill(rw_counter.occur.m_data, rw_counter.occur.m_data + graph.n, -1);
+    unsigned long long backward_counter = 0, old_num_total_rw = num_total_rw;
+    for (auto item:candidate) {
+        int node_id = item.first;
+        if (config2.rmax < 1.0) {
+            Timer tm(BWD_LU);
+            backward_counter += reverse_local_update_linear_dht_topk(node_id, graph, lowest_rmax, in_backward,
+                                                                     in_next_backward, backward_from);
+            ppr_bi.insert(node_id, multi_bwd_idx_p[node_id]);
+            {
+                Timer tm(DFS_CYCLE);
+                int num_s_rw=ceil(config2.omega);
+                num_total_rw += num_s_rw;
+                int index_size=rw_index[node_id].size();
+                if (num_s_rw>index_size){//如果不够，就先用索引中然后在线生成
+                    for (int j = 0; j < index_size; ++j) {
+                        int des =rw_index[node_id][j];
+                        if (multi_bwd_idx_r[node_id].find(des)!=multi_bwd_idx_r[node_id].end()){
+                            ppr_bi[node_id] += multi_bwd_idx_r[node_id][des]/num_s_rw;
+                        }
+                    }
+                    for (int k = 0; k < num_s_rw - index_size; ++k) {//在线生成同时更新索引
+                        int des = random_walk(node_id, graph);
+                        rw_index[node_id].emplace_back(des);
+                        if (multi_bwd_idx_r[node_id].find(des)!=multi_bwd_idx_r[node_id].end()){
+                            ppr_bi[node_id] += multi_bwd_idx_r[node_id][des]/num_s_rw;
+                        }
+                    }
+                }else{//如果够了就只用索引
+                    for (int j = 0; j < num_s_rw; ++j) {
+                        int des = rw_index[node_id][j];
+                        if (multi_bwd_idx_r[node_id].find(des)!=multi_bwd_idx_r[node_id].end()){
+                            ppr_bi[node_id] += multi_bwd_idx_r[node_id][des]/num_s_rw;
+                        }
+                    }
+                }
+            }
+        } else {
+            {
+                Timer tm(DFS_CYCLE);
+                int num_s_rw=ceil(config2.omega);
+                num_total_rw += num_s_rw;
+                int index_size=rw_index[node_id].size();
+                ppr_bi.insert(node_id, 0);
+                INFO(node_id,ppr_bi[node_id]);
+                if (num_s_rw>index_size){//如果不够，就先用索引中然后在线生成
+                    for (int j = 0; j < index_size; ++j) {
+                        int des =rw_index[node_id][j];
+                        if (des==node_id){
+                            ppr_bi[node_id] += 1.0/num_s_rw;
+                        }
+                    }
+                    for (int k = 0; k < num_s_rw - index_size; ++k) {//在线生成同时更新索引
+                        int des = random_walk(node_id, graph);
+                        rw_index[node_id].emplace_back(des);
+                        if (des==node_id){
+                            ppr_bi[node_id] += 1.0/num_s_rw;
+                        }
+                    }
+                }else{//如果够了就只用索引
+                    for (int j = 0; j < num_s_rw; ++j) {
+                        int des = rw_index[node_id][j];
+                        if (des==node_id){
+                            ppr_bi[node_id] += 1.0/num_s_rw;
+                        }
+                    }
+                }
+                INFO(node_id,ppr_bi[node_id]);
+            }
+        }
+    }
+    set_ppr_self_bounds(graph, candidate);
+    /*
+    INFO(num_total_rw - old_num_total_rw);
+    INFO(backward_counter, candidate.size(), 1 / config2.rmax, config2.epsilon, config2.delta);
+
+    cout << "ratio of bw and ra:\t" << backward_counter / candidate.size() / config2.omega << endl;
+    cout << "ratio of bw and true ra:\t" << backward_counter * 1.0 / (num_total_rw - old_num_total_rw) << endl;
+    cout << "ratio of ra and esti ra:\t" << (num_total_rw - old_num_total_rw) / candidate.size() / config2.omega
+         << endl;*/
+    num_total_bi += backward_counter;
+    return backward_counter;
+}
 
 bool bippr_query_with_fora_topk(const Graph &graph, double check_rsum, unordered_map<int, bool> &candidate,
                                 double lowest_rmax, unordered_map<int, vector<int>> &backward_from) {
@@ -896,6 +987,63 @@ int compute_ppr_with_fwdidx_topk_with_bound(const Graph &graph, double check_rsu
     return real_num_rand_walk;
 }
 
+int compute_ppr_with_fwdidx_topk_with_bound_with_idx(const Graph &graph, double check_rsum,
+                                            unordered_map<int, vector<int>> &rw_saver) {
+    compute_ppr_with_reserve();
+
+    if (check_rsum == 0.0)
+        return 0;
+
+    long num_random_walk = config.omega * check_rsum;
+    long real_num_rand_walk = 0;
+    int count_rw_fora_iter = 0, map_counter = 0;
+    {
+        Timer timer(RONDOM_WALK); //both rand-walk and source distribution are related with num_random_walk
+
+        //Timer tm(SOURCE_DIST);
+        { //rand walk online
+            for (long i = 0; i < fwd_idx.second.occur.m_num; i++) {
+                int source = fwd_idx.second.occur[i];
+                double residual = fwd_idx.second[source];
+                long num_s_rw = ceil(residual / check_rsum * num_random_walk);
+                double a_s = residual / check_rsum * num_random_walk / num_s_rw;
+
+                real_num_rand_walk += num_s_rw;
+                num_total_rw += num_s_rw;
+                double ppr_incre = a_s * check_rsum / num_random_walk;
+                int index_size=rw_index[source].size();
+                if (num_s_rw>index_size){
+                    for (int j = 0; j < index_size; ++j) {
+                        int des =rw_index[source][j];
+                        if (!ppr.exist(des))
+                            ppr.insert(des, ppr_incre);
+                        else
+                            ppr[des] += ppr_incre;
+                    }
+                    for (int k = 0; k < num_s_rw - index_size; ++k) {
+                        int des = random_walk(source, graph);
+                        rw_index[source].emplace_back(des);
+                        if (!ppr.exist(des))
+                            ppr.insert(des, ppr_incre);
+                        else
+                            ppr[des] += ppr_incre;
+                    }
+                }else{
+                    for (int j = 0; j < num_s_rw; ++j) {
+                        int des = rw_index[source][j];
+                        if (!ppr.exist(des))
+                            ppr.insert(des, ppr_incre);
+                        else
+                            ppr[des] += ppr_incre;
+                    }
+                }
+            }
+        }
+    }
+    if (config.delta < threshold)
+        set_ppr_bounds(graph, check_rsum, real_num_rand_walk);
+    return real_num_rand_walk;
+}
 void fora_bippr_query(int v, const Graph &graph, double raw_epsilon) {
     Timer timer(FB_QUERY);
     double rsum = 1.0, ratio = graph.n;//sqrt(config.alpha);
@@ -982,7 +1130,7 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
     forward_from.clear();
     forward_from.reserve(graph.n);
     forward_from.push_back(v);
-    static unordered_map<int, vector<int>> backward_from;
+    unordered_map<int, vector<int>> backward_from;
     //p和r等
     fwd_idx.first.clean();  //reserve
     fwd_idx.second.clean();  //residual
@@ -1018,16 +1166,9 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
                 forward_counter = forward_local_update_linear_topk_dht2(v, graph, rsum, config.rmax, lowest_delta_rmax,
                                                                         forward_from); //forward propagation, obtain reserve and residual
             }
-            real_num_rand_walk = compute_ppr_with_fwdidx_topk_with_bound(graph, rsum, rw_saver);
-            //real_num_rand_walk = compute_ppr_with_fwdidx_topk_with_bound_alias(graph, rsum);
-
-            //INFO(forward_counter/real_num_rand_walk);
-            //INFO(real_num_rand_walk/rsum/config.omega);
+            real_num_rand_walk = compute_ppr_with_fwdidx_topk_with_bound_with_idx(graph, rsum, rw_saver);
         } else {
-            //cout << "ratio of bw/esti bw bw/esti old:\t" << num_total_bi  <<"\t"<< num_total_bi/(graph.m/graph.n/config.alpha/config2.rmax) / candidate.size()<<"\t"<<num_total_bi*config2.rmax/ candidate.size()<<endl;
-            backward_counter = bippr_query_candidate(graph, candidate, lowest_delta_rmax_2, backward_from);
-            //cout << "ratio of bw and esti bw:\t" << backward_counter / candidate.size()/(graph.m/graph.n/config2.alpha/ config2.rmax-graph.m/graph.n/config2.alpha/ old_b_rmax) << endl;
-            //cout << "ratio of esti bw and esti ra:\t" << (1/ config2.rmax-1/old_b_rmax)/ config2.omega << endl;
+            backward_counter = bippr_query_candidate_with_idx(graph, candidate, lowest_delta_rmax_2, backward_from);
         }
         if (config.delta < threshold) {
             set_dht_bounds(candidate);
@@ -1040,6 +1181,9 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
             dht.clean();
             for (auto item:candidate) {
                 int node = item.first;
+                if(ppr_bi[node]<=0){
+                    INFO(node);
+                }
                 dht.insert(node, ppr[node] / ppr_bi[node]);
             }
             break;
@@ -1058,6 +1202,9 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
                 dht.clean();
                 for (auto item:candidate) {
                     int node = item.first;
+                    if(ppr_bi[node]<=0){
+                        INFO(node);
+                    }
                     dht.insert(node, ppr[node] / ppr_bi[node]);
                 }
                 break;
@@ -1079,6 +1226,9 @@ void fora_bippr_query_topk(int v, const Graph &graph) {
                     dht.clean();
                     for (auto item:candidate) {
                         int node = item.first;
+                        if(ppr_bi[node]<=0){
+                            INFO(node);
+                        }
                         dht.insert(node, ppr[node] / ppr_bi[node]);
                     }
                     break;
@@ -1270,6 +1420,7 @@ void get_topk2(int v, Graph &graph) {
         //fb_raw_query_topk(v, graph);
         topk_dht();
     } else if (config.algo == FB) {
+        rw_index.clear();
         fora_bippr_query_topk(v, graph);
         topk_dht();
         topk_ppr();
@@ -1296,7 +1447,6 @@ void get_topk2(int v, Graph &graph) {
 #endif
 
 }
-
 void fwd_power_iteration(const Graph &graph, int start, unordered_map<int, double> &map_ppr) {
     static thread_local unordered_map<int, double> map_residual;
     map_residual[start] = 1.0;

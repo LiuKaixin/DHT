@@ -50,6 +50,7 @@ atomic<unsigned long long> num_total_fo;
 long num_iter_topk;
 vector<int> rw_idx;
 vector<pair<unsigned long long, unsigned long> > rw_idx_info;
+unordered_map<int, vector<int>> rw_index;
 
 map<int, vector<pair<int, double> > > exact_topk_pprs;
 map<int, vector<pair<int, double>>> exact_topk_dhts;
@@ -1050,7 +1051,7 @@ void compute_NDCG(int v, const map<int, double> ppr_self, Graph &graph) {
         }
         cout<<endl;
         double NDCG = DCG / iDCG;
-        INFO(NDCG);
+        INFO(DCG,iDCG, NDCG);
         if (exact_map.size() <= 1)
             return;
         result.topk_NDCG += NDCG;
@@ -1514,7 +1515,11 @@ reverse_local_update_linear_dht_topk(int s, const Graph &graph, double lowest_rm
             int out_neighbor = graph.gr[v].size();
             backward_counter += out_neighbor;
             if (s == v) {
+                assert(multi_bwd_idx_r[s][v]>0);
                 multi_bwd_idx_p[s] += multi_bwd_idx_r[s][v] * config.alpha;
+                if (multi_bwd_idx_p[s]==0){
+                    INFO(multi_bwd_idx_r[s][v],s,v);
+                }
             }
             double v_residue = (1 - config.alpha) * multi_bwd_idx_r[s][v];
             multi_bwd_idx_r[s].erase(v);//这里删除好还是等于0好？
@@ -2418,8 +2423,8 @@ void set_dht_bounds(unordered_map<int, bool> &candidate) {
             upper_bounds_dht.insert(node, upper_bounds[node] / lower_bounds_self[node]);
             lower_bounds_dht.insert(node, lower_bounds[node] / upper_bounds_self[node]);
             temp_dht[j] = lower_bounds_dht[node];
-/*
-            if (node == 77266) {
+
+            /*if (node == 7209||node == 115127) {
                 cout<<"node:\tppr\t"<<"ub_ppr\t"<<"lb_ppr\tratio\t"<<"ppr_bi\tub_self\t"<<"lb_self\tratio\t\t"<<"up_dht\tlb_dht\tratio"<<endl;
                 cout<<node<<":\t"<<ppr[node]<<"\t"<<upper_bounds[node]<<"\t"<<lower_bounds[node]<<"\t"<<upper_bounds[node]/lower_bounds[node]/(1+config.epsilon)*(1-config.epsilon)<<"\t"
                     <<ppr[node]<<"\t"<<upper_bounds_self[node]<<"\t"<<lower_bounds_self[node]<<"\t"<<lower_bounds_self[node]/lower_bounds_self[node]/(1+config2.epsilon)*(1-config2.epsilon) <<"\t\t"
@@ -2450,17 +2455,17 @@ void set_dht_bounds(unordered_map<int, bool> &candidate) {
             upper_bounds_dht.insert(node, upper_bounds[node] / lower_bounds_self[node]);
             lower_bounds_dht.insert(node, lower_bounds[node] / upper_bounds_self[node]);
             temp_dht[cur++] = lower_bounds_dht[node];
-/*            if (node == 77266) {
-                cout<<"node:\tppr\t"<<"ub_ppr\t"<<"lb_ppr\tratio\t"<<"ppr_bi\tub_self\t"<<"lb_self\tratio\t\t"<<"up_dht\tlb_dht\tratio"<<endl;
-                cout<<node<<":\t"<<ppr[node]<<"\t"<<upper_bounds[node]<<"\t"<<lower_bounds[node]<<"\t"<<upper_bounds[node]/lower_bounds[node]/(1+config.epsilon)*(1-config.epsilon)<<"\t"
-                    <<ppr[node]<<"\t"<<upper_bounds_self[node]<<"\t"<<lower_bounds_self[node]<<"\t"<<lower_bounds_self[node]/lower_bounds_self[node]/(1+config2.epsilon)*(1-config2.epsilon) <<"\t\t"
-                    <<upper_bounds_dht[node]<<"\t"<<lower_bounds_dht[node]<<"\t"<<upper_bounds_dht[node]/lower_bounds_dht[node]<<endl;
-            }
-/*1632786 1632784 1632783 1632764 1632761 1632752 1632747
-            cout<<node<<":\t"<<upper_bounds[node]<<"\t"<<lower_bounds[node]<<"\t"<<upper_bounds[node]/lower_bounds[node]/(1+config.epsilon)*(1-config.epsilon)<<"\t"
-                <<upper_bounds_self[node]<<"\t"<<lower_bounds_self[node]<<"\t"<<lower_bounds_self[node]/lower_bounds_self[node]/(1+config2.epsilon)*(1-config2.epsilon) <<"\t\t"
-                <<upper_bounds_dht[node]<<"\t"<<lower_bounds_dht[node]<<"\t"<<upper_bounds_dht[node]/lower_bounds_dht[node]<<endl;
-                */
+            /* if (node == 7209||node == 115127) {
+                 cout<<"node:\tppr\t"<<"ub_ppr\t"<<"lb_ppr\tratio\t"<<"ppr_bi\tub_self\t"<<"lb_self\tratio\t\t"<<"up_dht\tlb_dht\tratio"<<endl;
+                 cout<<node<<":\t"<<ppr[node]<<"\t"<<upper_bounds[node]<<"\t"<<lower_bounds[node]<<"\t"<<upper_bounds[node]/lower_bounds[node]/(1+config.epsilon)*(1-config.epsilon)<<"\t"
+                     <<ppr[node]<<"\t"<<upper_bounds_self[node]<<"\t"<<lower_bounds_self[node]<<"\t"<<lower_bounds_self[node]/lower_bounds_self[node]/(1+config2.epsilon)*(1-config2.epsilon) <<"\t\t"
+                     <<upper_bounds_dht[node]<<"\t"<<lower_bounds_dht[node]<<"\t"<<upper_bounds_dht[node]/lower_bounds_dht[node]<<endl;
+             }
+ /*1632786 1632784 1632783 1632764 1632761 1632752 1632747
+             cout<<node<<":\t"<<upper_bounds[node]<<"\t"<<lower_bounds[node]<<"\t"<<upper_bounds[node]/lower_bounds[node]/(1+config.epsilon)*(1-config.epsilon)<<"\t"
+                 <<upper_bounds_self[node]<<"\t"<<lower_bounds_self[node]<<"\t"<<lower_bounds_self[node]/lower_bounds_self[node]/(1+config2.epsilon)*(1-config2.epsilon) <<"\t\t"
+                 <<upper_bounds_dht[node]<<"\t"<<lower_bounds_dht[node]<<"\t"<<upper_bounds_dht[node]/lower_bounds_dht[node]<<endl;
+                 */
         }
         nth_element(temp_dht.begin(), temp_dht.begin() + config.k - 1, temp_dht.end(), cmp);
         double kth_dht_lb = temp_dht[config.k - 1];
